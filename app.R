@@ -23,8 +23,8 @@ site_data <- map_dfr(
 site_data_fmt <-
   site_data %>%
   ## left_join(site_metadata, by = c("Site" = "Site_ID")) %>%
-  mutate(ob_time = date(dmy_hm(ob_time))) %>%
-  select(-c(day, month))
+  mutate(ob_time = dmy_hm(ob_time)) %>%
+  select(-c(hour, day, month))
 
 hutton <- function(.data) {
   site_data_fmt %>%
@@ -38,4 +38,40 @@ hutton <- function(.data) {
         humid = pmin(lag(humid_hours, n = 1), lag(humid_hours, n = 2)) >= 6
     ) %>%
     ungroup()
+}
+
+#' Main plot of the dashboard
+#'
+#' Is able to produce a single summary statistic (eg. max, min, mean) for a
+#'  given aggregate time unit.
+#'
+#' @note Maybe this function should return data. Have a separate plotter. This
+#'  way, different aggregations could be combined, but only the plotter would
+#'  have to be aware of that logic
+#' @param obs Data frame of weather observations
+#' @param sites List of sites to filter observations by
+#' @param variable The observation type to display
+#' @param t_rep The unit of time represented in the x axis
+#' @param t_agg The unit of time for aggregation
+#' @param .fn Function to compute summary statistic on `variable`
+plot_primary <- function(obs, sites, variable, t_rep, t_agg, .fn) {
+  units <- list("months" = 0, "days" = 1, "hours" = 2)
+
+  ## Time unit of aggregation (agg) cannot be larger than the unit of time
+  ## represented (t_rep) in the x-axis. If this situation is given, set agg to
+  ## be equal to t_rep.
+  if (units[[t_agg]] > units[[t_rep]]) {
+    t_agg <- t_rep
+  }
+
+  obs %>%
+    filter(Site %in% sites) %>%
+    mutate(ob_time = floor_date(ob_time, t_agg)) %>%
+    group_by(Site, ob_time) %>%
+    summarise(
+      max = max({{ variable }}, na.rm = TRUE),
+      min = min({{ variable }}, na.rm = TRUE),
+
+    )
+
 }

@@ -13,65 +13,125 @@ site_metadata <- read_csv(paste0(data_path, "Sites.csv"))
 
 site_data <- map_dfr(
   site_paths,
-  ~
-    read_csv(
-      .x,
-      col_types = "ciiiddddi",
-      na = c("NA", NA))
-)
-
-site_data_fmt <-
-  site_data %>%
-  ## left_join(site_metadata, by = c("Site" = "Site_ID")) %>%
+  ~ read_csv(
+    .x,
+    col_types = "ciiiddddi",
+    na = c("NA", NA)
+  )
+) %>%
   mutate(ob_time = dmy_hm(ob_time)) %>%
   select(-c(hour, day, month))
 
-hutton <- function(.data) {
-  site_data_fmt %>%
+
+## TODO: Need to cleanup all the datetime data. Fix the excess observations,
+##  non-existant dates ...
+
+#' Calculate the Hutton Criteria
+#'
+#' @description TODO
+#'
+#' @param obs Data Frame of weather observations
+hutton <- function(obs) {
+  obs %>%
     group_by(Site, ob_time) %>%
     summarise(
       min_temp = min(air_temperature),
       humid_hours = sum(rltv_hum >= 90.0)
     ) %>%
     mutate(
-        warm = pmin(lag(min_temp, n = 1), lag(min_temp, n = 2)) >= 10,
-        humid = pmin(lag(humid_hours, n = 1), lag(humid_hours, n = 2)) >= 6
+      warm = pmin(lag(min_temp, n = 1), lag(min_temp, n = 2)) >= 10,
+      humid = pmin(lag(humid_hours, n = 1), lag(humid_hours, n = 2)) >= 6
     ) %>%
     ungroup()
 }
 
-#' Main plot of the dashboard
+#' Aggregate and summarise weather observations
 #'
 #' Is able to produce a single summary statistic (eg. max, min, mean) for a
 #'  given aggregate time unit.
 #'
 #' @note Maybe this function should return data. Have a separate plotter. This
 #'  way, different aggregations could be combined, but only the plotter would
-#'  have to be aware of that logic
+#'  have to be aware of that logic. Keeps this func simple and focussed on
+#'  individual aggregations.
+#'
 #' @param obs Data frame of weather observations
 #' @param sites List of sites to filter observations by
-#' @param variable The observation type to display
+#' @param variable The measurement to display
 #' @param t_rep The unit of time represented in the x axis
 #' @param t_agg The unit of time for aggregation
-#' @param .fn Function to compute summary statistic on `variable`
-plot_primary <- function(obs, sites, variable, t_rep, t_agg, .fn) {
-  units <- list("months" = 0, "days" = 1, "hours" = 2)
+#' @param .fn Function to compute summary statistic on `variable`. Must accept
+#'  `na.rm` as a second arg.
+aggregate.primary <- function(obs, variable, t_rep, t_agg, .fn) {
+  ## If aggregation and representation are hourly, there is no calculation to
+  ## make as this is already the structure of the data.
+  if (t_rep == "hours" & t_agg == "hours") {
+    return(obs)
+  }
 
-  ## Time unit of aggregation (agg) cannot be larger than the unit of time
+  units <- list("hours" = 0, "days" = 1, "months" = 2)
+
+  ## Time unit of aggregation (agg) cannot be smaller than the unit of time
   ## represented (t_rep) in the x-axis. If this situation is given, set agg to
   ## be equal to t_rep.
-  if (units[[t_agg]] > units[[t_rep]]) {
+  if (units[[t_agg]] < units[[t_rep]]) {
     t_agg <- t_rep
   }
 
   obs %>%
-    filter(Site %in% sites) %>%
     mutate(ob_time = floor_date(ob_time, t_agg)) %>%
     group_by(Site, ob_time) %>%
-    summarise(
-      max = max({{ variable }}, na.rm = TRUE),
-      min = min({{ variable }}, na.rm = TRUE),
-
-    )
-
+    summarise(stat = .fn({{ variable }}, na.rm = TRUE)) %>%
+    ungroup(ob_time)
 }
+
+#' Primary plot of weather observations
+#'
+#' @param obs Aggregated data frame of weather observations
+#' @param variable The measurement to display
+#' @param t_rep The unit of time represented in the x axis
+#' @param t_range The range of values that t_rep will be displayed within,
+#'  e.g. days in the week (t_rep = "days", t_range = "weeks") -> [1:7]
+#'  e.g. days in the month (t_rep = "days", t_range = "months") -> [1:31]
+#' @param t_agg The unit of time for aggregation
+plot.primary <- function(obs, variable, t_rep, t_agg, t_range = "years") {
+  choice <- paste(t_rep, t_range)
+
+  x_rep <- switch(
+    choice,
+    "days weeks" = function(x) wday(x, week_start = 1),
+    "days months" = mday,
+    "days years" = identity, # Calendar time
+    "hours days" = hour,
+    "hours weeks" = function(x) (wday(x, week_start = 1) - 1) * hour(x),
+    "hours months" = function(x) (mday(x) - 1) * hour(x),
+    "weeks years" = week,
+    "months years" = month
+  )
+
+  obs %>%
+    add_metadata() %>%
+    mutate(x = x_rep(ob_time)) %>%
+    ggplot(aes(x = x, y = stat, color = Site_Name)) +
+    geom_point()
+}
+
+## TODO
+aggregate.hutton <- function() {}
+plot.hutton <- function() {}
+
+## TODO
+aggregate.map <- function() {}
+plot.map <- function() {}
+
+example_sites <- site_metadata %>% filter(Site_Name %in% c("Aldergrove", "Heathrow", "Leuchars", "Shawbury"))
+
+add_metadata <- function(obs) {
+  obs %>% left_join(site_metadata, by = c("Site" = "Site_ID"))
+}
+
+## Test aggregate.primary and plot.primary
+site_data %>%
+  semi_join(example_sites, by = c("Site" = "Site_ID")) %>%
+  aggregate.primary(air_temperature, "days", "days", max) %>%
+  plot.primary("", "days", "days", "months")

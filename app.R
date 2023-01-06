@@ -2,6 +2,7 @@ library(tidyverse)
 library(shiny)
 library(fs)
 library(lubridate)
+library(leaflet)
 
 data_path <- "data/"
 files <- dir(data_path)
@@ -87,6 +88,10 @@ aggregate.primary <- function(obs, variable, t_rep, t_agg, .fn) {
 
 #' Primary plot of weather observations
 #'
+#' @note TODO: Can library(units) be used here to deal with the time units?
+#'  Alternatively, just make the `choice` variable and all the `t_*` variables
+#'  numeric, and include a lookup.
+#'
 #' @param obs Aggregated data frame of weather observations
 #' @param variable The measurement to display
 #' @param t_rep The unit of time represented in the x axis
@@ -109,11 +114,17 @@ plot.primary <- function(obs, variable, t_rep, t_agg, t_range = "years") {
     "months years" = month
   )
 
-  obs %>%
+  p <- obs %>%
     add_metadata() %>%
     mutate(x = x_rep(ob_time)) %>%
-    ggplot(aes(x = x, y = stat, color = Site_Name)) +
-    geom_point()
+    ggplot(aes(x = x, y = stat, color = Site_Name))
+
+  ## if (choice == "hours days") {
+  ##   return(p + geom_line())
+  ## } else {
+  ##   return(p + geom_point())
+  ## }
+  return(p)
 }
 
 ## TODO
@@ -131,7 +142,89 @@ add_metadata <- function(obs) {
 }
 
 ## Test aggregate.primary and plot.primary
-site_data %>%
-  semi_join(example_sites, by = c("Site" = "Site_ID")) %>%
-  aggregate.primary(air_temperature, "days", "days", max) %>%
-  plot.primary("", "days", "days", "months")
+if (FALSE) {
+  site_data %>%
+    semi_join(example_sites, by = c("Site" = "Site_ID")) %>%
+    aggregate.primary(air_temperature, "days", "days", max) %>%
+    plot.primary("", "days", "days", "months")
+}
+
+#### Server ####
+
+
+ui <- fluidPage(
+  fluidRow(
+    leafletOutput("map")
+  ),
+  fluidRow(
+    textOutput("clicked")
+  ),
+  fluidRow(
+    tableOutput("metadata")
+  )
+)
+
+server <- function(input, output, session) {
+  ## TODO: Reactive to produce the metadata. This, or another reactive should
+  ##  manage the selected weather stations.
+
+  selected <- c("Heathrow", "Abbotsinch")
+
+  metadata <- reactive({
+    site_metadata
+  })
+
+  output$metadata <- renderTable(metadata())
+  ## output$selected <- reactive({
+  ##   metadata() %>% filter(selected)
+  ## })
+
+  output$map <- renderLeaflet({
+    leaflet(
+      data = metadata() %>%
+        mutate(colour = if_else(Site_Name %in% selected, "green", "red"))
+    ) %>%
+      addTiles() %>%
+      addScaleBar() %>%
+      addMiniMap() %>%
+      addCircleMarkers(
+        lng = ~ Longitude,
+        lat = ~ Latitude,
+        label = ~ Site_Name,
+        layerId = ~ Site_ID,
+        color = ~ colour
+      )
+  })
+
+  output$something <- renderPrint({reactiveValuesToList(input)})
+
+  observe({
+    click<-input$map_marker_click
+    if(is.null(click)) {
+      return()
+    }
+    text<-paste("Lattitude ", click$lat, "Longtitude ", click$lng)
+    text2<-paste("You've selected point ", click$id, text)
+    output$clicked<-renderText({
+      text2
+    })
+
+    selected <<- c(selected, click$id)
+
+    leafletProxy(
+      "map",
+      data = metadata() %>%
+        mutate(colour = if_else(Site_Name %in% selected, "green", "red"))
+    ) %>%
+      clearMarkers() %>% # TODO: does this need to be optimised? maybe just remove the edited markers
+      addCircleMarkers(
+        lng = ~ Longitude,
+        lat = ~ Latitude,
+        label = ~ Site_Name,
+        layerId = ~ Site_ID,
+        color = ~ colour
+      )
+  })
+}
+
+shinyApp(ui, server)

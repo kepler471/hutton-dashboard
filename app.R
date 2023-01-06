@@ -124,7 +124,7 @@ plot.primary <- function(obs, variable, t_rep, t_agg, t_range = "years") {
   ## } else {
   ##   return(p + geom_point())
   ## }
-  return(p)
+  return(p + geom_point())
 }
 
 ## TODO

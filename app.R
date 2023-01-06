@@ -1,5 +1,6 @@
 library(tidyverse)
 library(shiny)
+library(shinyalert)
 library(fs)
 library(lubridate)
 library(leaflet)
@@ -7,11 +8,9 @@ library(leaflet)
 data_path <- "data/"
 files <- dir(data_path)
 site_files <- files[files != "Sites.csv"]
-
 site_paths <- paste0(data_path, site_files)
-
 site_metadata <- read_csv(paste0(data_path, "Sites.csv"))
-
+site_names <- setNames(site_metadata$Site_Name, site_metadata$Site_ID)
 site_data <- map_dfr(
   site_paths,
   ~ read_csv(
@@ -20,12 +19,19 @@ site_data <- map_dfr(
     na = c("NA", NA)
   )
 ) %>%
-  mutate(ob_time = dmy_hm(ob_time)) %>%
+  distinct() %>%
+  mutate(ob_time = dmy_hm(ob_time, quiet = TRUE)) %>%
+  drop_na(ob_time) %>%
   select(-c(hour, day, month))
 
-
-## TODO: Need to cleanup all the datetime data. Fix the excess observations,
-##  non-existant dates ...
+time_aggregation <- function(as.names = FALSE) {
+  labels <- c("hours", "days", "weeks", "months", "years")
+  values <- c(0, 1, 2, 3, 4)
+  if (as.names) {
+    return(setNames(labels, str_to_title(labels)))
+  }
+  return(setNames(values, labels))
+}
 
 #' Calculate the Hutton Criteria
 #'
@@ -51,11 +57,6 @@ hutton <- function(obs) {
 #' Is able to produce a single summary statistic (eg. max, min, mean) for a
 #'  given aggregate time unit.
 #'
-#' @note Maybe this function should return data. Have a separate plotter. This
-#'  way, different aggregations could be combined, but only the plotter would
-#'  have to be aware of that logic. Keeps this func simple and focussed on
-#'  individual aggregations.
-#'
 #' @param obs Data frame of weather observations
 #' @param sites List of sites to filter observations by
 #' @param variable The measurement to display
@@ -70,19 +71,20 @@ aggregate.primary <- function(obs, variable, t_rep, t_agg, .fn) {
     return(obs)
   }
 
-  units <- list("hours" = 0, "days" = 1, "months" = 2)
+  units <- time_aggregation()
 
   ## Time unit of aggregation (agg) cannot be smaller than the unit of time
   ## represented (t_rep) in the x-axis. If this situation is given, set agg to
   ## be equal to t_rep.
-  if (units[[t_agg]] < units[[t_rep]]) {
+  ## NOTE: This should/will be handled by the server
+  if (units[t_agg] < units[t_rep]) {
     t_agg <- t_rep
   }
 
   obs %>%
     mutate(ob_time = floor_date(ob_time, t_agg)) %>%
     group_by(Site, ob_time) %>%
-    summarise(stat = .fn({{ variable }}, na.rm = TRUE)) %>%
+    summarise(stat = .fn(.data[[variable]], na.rm = TRUE)) %>%
     ungroup(ob_time)
 }
 
@@ -102,8 +104,7 @@ aggregate.primary <- function(obs, variable, t_rep, t_agg, .fn) {
 plot.primary <- function(obs, variable, t_rep, t_agg, t_range = "years") {
   choice <- paste(t_rep, t_range)
 
-  x_rep <- switch(
-    choice,
+  x_rep <- switch(choice,
     "days weeks" = function(x) wday(x, week_start = 1),
     "days months" = mday,
     "days years" = identity, # Calendar time
@@ -117,114 +118,193 @@ plot.primary <- function(obs, variable, t_rep, t_agg, t_range = "years") {
   p <- obs %>%
     add_metadata() %>%
     mutate(x = x_rep(ob_time)) %>%
-    ggplot(aes(x = x, y = stat, color = Site_Name))
+    ggplot(aes(x = x, y = stat, color = Site_Name)) # TODO: dynamic naming of stat
 
-  ## if (choice == "hours days") {
-  ##   return(p + geom_line())
-  ## } else {
-  ##   return(p + geom_point())
-  ## }
+  ## TODO: handle choice of line/points
   return(p + geom_point())
 }
 
 ## TODO
-aggregate.hutton <- function() {}
 plot.hutton <- function() {}
-
-## TODO
-aggregate.map <- function() {}
-plot.map <- function() {}
-
-example_sites <- site_metadata %>% filter(Site_Name %in% c("Aldergrove", "Heathrow", "Leuchars", "Shawbury"))
 
 add_metadata <- function(obs) {
   obs %>% left_join(site_metadata, by = c("Site" = "Site_ID"))
 }
 
-## Test aggregate.primary and plot.primary
-if (FALSE) {
-  site_data %>%
-    semi_join(example_sites, by = c("Site" = "Site_ID")) %>%
-    aggregate.primary(air_temperature, "days", "days", max) %>%
-    plot.primary("", "days", "days", "months")
-}
-
-#### Server ####
-
-
 ui <- fluidPage(
   fluidRow(
-    leafletOutput("map")
-  ),
-  fluidRow(
-    textOutput("clicked")
-  ),
-  fluidRow(
-    tableOutput("metadata")
+    column(
+      6,
+      fluidRow(
+        plotOutput("primary"),
+        selectInput(
+          "variable",
+          "Select Weather Variable",
+          choices = c("Wind speed (knots)" = "wind_speed",
+                      "Air temperature (C)" = "air_temperature",
+                      "Relative humidity (%)" = "rltv_hum",
+                      "Visibility (m)" = "visibility"),
+          selected = "air_temperature"
+        ),
+        selectInput(
+          "range",
+          "Date Range",
+          choices = time_aggregation(as.names = TRUE),
+          selected = "years"
+        ),
+        selectInput(
+          "t_agg",
+          "Time Aggregation",
+          choices = time_aggregation(as.names = TRUE),
+          selected = "days"
+        ),
+        selectInput(
+          "t_rep",
+          "Time Representation",
+          choices = time_aggregation(as.names = TRUE),
+          selected = "days"
+        )
+      )
+    ),
+    column(
+      6,
+      leafletOutput("map", height = 1000)
+    )
   )
 )
 
 server <- function(input, output, session) {
-  ## TODO: Reactive to produce the metadata. This, or another reactive should
-  ##  manage the selected weather stations.
+  ## TODO: Create the UI inputs as reactives with renderUI. Use this to limit
+  ##  the possible combinations of time units and ranges
 
-  selected <- c("Heathrow", "Abbotsinch")
+  selected <- reactiveVal(c("Heathrow", "Abbotsinch"))
+  metadata <- reactive(site_metadata)
+  filtered <- reactive(metadata() %>% filter(Site_Name %in% selected()))
 
-  metadata <- reactive({
-    site_metadata
+  output$primary <- renderPlot({
+    site_data %>%
+      semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
+      aggregate.primary(input$variable, input$t_rep, input$t_agg, max) %>%
+      plot.primary("", input$t_rep, input$t_agg, input$range)
   })
-
-  output$metadata <- renderTable(metadata())
-  ## output$selected <- reactive({
-  ##   metadata() %>% filter(selected)
-  ## })
 
   output$map <- renderLeaflet({
+    ## TODO: use Stadia.AlidadeSmooth tileset
     leaflet(
       data = metadata() %>%
-        mutate(colour = if_else(Site_Name %in% selected, "green", "red"))
+        mutate(colour = if_else(Site_Name %in% selected(), "green", "red")),
+      options = leafletOptions(
+        zoomControl = FALSE,
+        maxZoom = 10,
+        minZoom = 4)
     ) %>%
-      addTiles() %>%
-      addScaleBar() %>%
-      addMiniMap() %>%
+      addProviderTiles(providers$CartoDB.Positron) %>%
       addCircleMarkers(
-        lng = ~ Longitude,
-        lat = ~ Latitude,
-        label = ~ Site_Name,
-        layerId = ~ Site_ID,
-        color = ~ colour
+        lng = ~Longitude,
+        lat = ~Latitude,
+        label = ~Site_Name,
+        layerId = ~Site_ID,
+        color = ~colour
       )
   })
 
-  output$something <- renderPrint({reactiveValuesToList(input)})
+  observeEvent(
+    input$map_marker_click,
+    {
+      click <- input$map_marker_click
 
-  observe({
-    click<-input$map_marker_click
-    if(is.null(click)) {
-      return()
+      prev_selection <- selected()
+      new_selection <- site_names[as.character(click$id)]
+
+      if (new_selection %in% prev_selection) {
+        if (length(prev_selection > 1)) {
+          ## Remove from selection
+          selected(prev_selection[prev_selection != new_selection])
+        }
+      } else if (length(prev_selection) < 5) {
+        ## Add to selection
+        selected(c(prev_selection, new_selection))
+      } else {
+        ## Show error thax max limit is reached
+        shinyalert(
+          text = paste(
+            "There is a maximum of", 5, "weather stations",
+            "Please deselect a station to make room for the one you want"
+          ),
+          size = "xs",
+          closeOnEsc = TRUE,
+          closeOnClickOutside = TRUE,
+          html = FALSE,
+          type = "warning",
+          showConfirmButton = TRUE,
+          showCancelButton = FALSE,
+          confirmButtonText = "OK",
+          confirmButtonCol = "#AEDEF4",
+          timer = 0,
+          imageUrl = "",
+          animation = FALSE
+        )
+      }
+
+      leafletProxy(
+        "map",
+        data = metadata() %>%
+          ## TODO: Make colour of marker the same as the plot colour
+          mutate(colour = if_else(Site_Name %in% selected(), "green", "red"))
+      ) %>%
+        clearMarkers() %>% # TODO: does this need to be optimised? maybe just remove the edited markers
+        addCircleMarkers(
+          lng = ~Longitude,
+          lat = ~Latitude,
+          label = ~Site_Name,
+          layerId = ~Site_ID,
+          color = ~colour
+        ) %>%
+        setView(
+          lng = input$map_center$lng,
+          lat = input$map_center$lat,
+          zoom = input$map_zoom,
+          options = list(animate = FALSE)
+        )
     }
-    text<-paste("Lattitude ", click$lat, "Longtitude ", click$lng)
-    text2<-paste("You've selected point ", click$id, text)
-    output$clicked<-renderText({
-      text2
-    })
-
-    selected <<- c(selected, click$id)
-
-    leafletProxy(
-      "map",
-      data = metadata() %>%
-        mutate(colour = if_else(Site_Name %in% selected, "green", "red"))
-    ) %>%
-      clearMarkers() %>% # TODO: does this need to be optimised? maybe just remove the edited markers
-      addCircleMarkers(
-        lng = ~ Longitude,
-        lat = ~ Latitude,
-        label = ~ Site_Name,
-        layerId = ~ Site_ID,
-        color = ~ colour
-      )
-  })
+  )
 }
 
 shinyApp(ui, server)
+
+#' (WIP): Map marker click handler
+#'
+#' @note Might be more trouble than worth to use this, rather than just leaving
+#'  the code in the server function.
+on_click <- function(new_selection, prev_selection, max.length = 5) {
+  if (new_selection %in% prev_selection) {
+    if (length(prev_selection > 1)) {
+      ## Remove from selection
+      return(prev_selection[prev_selection != new_selection])
+    }
+  } else if (length(prev_selection) < max.length) {
+    ## Add to selection
+    return(c(prev_selection, new_selection))
+  }
+    ## Show error thax max limit is reached
+  return(
+    shinyalert(
+      text = paste(
+        "There is a maximum of", 5, "weather stations",
+        "Please deselect a station to make room for the one you want"
+      ),
+      size = "xs",
+      closeOnEsc = TRUE,
+      closeOnClickOutside = TRUE,
+      html = FALSE,
+      type = "warning",
+      showConfirmButton = TRUE,
+      showCancelButton = FALSE,
+      confirmButtonText = "OK",
+      confirmButtonCol = "#AEDEF4",
+      timer = 0,
+      imageUrl = "",
+      animation = FALSE
+    )
+  )
+}

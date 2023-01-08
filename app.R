@@ -5,6 +5,9 @@ library(fs)
 library(lubridate)
 library(leaflet)
 
+## TODO: include potato icons?
+## TODO: try https://rstudio.github.io/gridlayout/
+
 data_path <- "data/"
 files <- dir(data_path)
 site_files <- files[files != "Sites.csv"]
@@ -19,6 +22,10 @@ site_data <- map_dfr(
     na = c("NA", NA)
   )
 ) %>%
+  ## Remove duplicate records where at least one is NA
+  arrange(Site, ob_time, rltv_hum) %>%
+  fill(rltv_hum, .direction = "down") %>%
+  ## Remove all duplicates
   distinct() %>%
   mutate(ob_time = dmy_hm(ob_time, quiet = TRUE)) %>%
   drop_na(ob_time) %>%
@@ -27,10 +34,9 @@ site_data <- map_dfr(
 time_aggregation <- function(as.names = FALSE) {
   labels <- c("hours", "days", "weeks", "months", "years")
   values <- c(0, 1, 2, 3, 4)
-  if (as.names) {
-    return(setNames(labels, str_to_title(labels)))
-  }
-  return(setNames(values, labels))
+  if (as.names) return(setNames(labels, str_to_title(labels)))
+
+  setNames(values, labels)
 }
 
 #' Calculate the Hutton Criteria
@@ -38,16 +44,19 @@ time_aggregation <- function(as.names = FALSE) {
 #' @description TODO
 #'
 #' @param obs Data Frame of weather observations
-hutton <- function(obs) {
+hutton <- function(obs, t_agg = "days") {
   obs %>%
+    mutate(ob_time = floor_date(ob_time, t_agg)) %>%
     group_by(Site, ob_time) %>%
     summarise(
-      min_temp = min(air_temperature),
+      min_temp = min(air_temperature, na.rm = TRUE),
       humid_hours = sum(rltv_hum >= 90.0)
     ) %>%
     mutate(
       warm = pmin(lag(min_temp, n = 1), lag(min_temp, n = 2)) >= 10,
-      humid = pmin(lag(humid_hours, n = 1), lag(humid_hours, n = 2)) >= 6
+      warm.n = lag(min_temp, n = 1) + lag(min_temp, n = 2),
+      humid = pmin(lag(humid_hours, n = 1), lag(humid_hours, n = 2)) >= 6,
+      humid.n = lag(humid_hours, n = 1) + lag(humid_hours, n = 2)
     ) %>%
     ungroup()
 }
@@ -67,9 +76,7 @@ hutton <- function(obs) {
 aggregate.primary <- function(obs, variable, t_rep, t_agg, .fn) {
   ## If aggregation and representation are hourly, there is no calculation to
   ## make as this is already the structure of the data.
-  if (t_rep == "hours" & t_agg == "hours") {
-    return(obs)
-  }
+  if (t_rep == "hours" & t_agg == "hours") return(obs)
 
   units <- time_aggregation()
 
@@ -77,9 +84,7 @@ aggregate.primary <- function(obs, variable, t_rep, t_agg, .fn) {
   ## represented (t_rep) in the x-axis. If this situation is given, set agg to
   ## be equal to t_rep.
   ## NOTE: This should/will be handled by the server
-  if (units[t_agg] < units[t_rep]) {
-    t_agg <- t_rep
-  }
+  if (units[t_agg] < units[t_rep]) t_agg <- t_rep
 
   obs %>%
     mutate(ob_time = floor_date(ob_time, t_agg)) %>%
@@ -124,8 +129,52 @@ plot.primary <- function(obs, variable, t_rep, t_agg, t_range = "years") {
   return(p + geom_point())
 }
 
-## TODO
-plot.hutton <- function() {}
+#' Plot the Hutton criteria for a selected weather station
+plot.hutton <- function(obs) {
+  temp_lim <- 30
+  hum_lim <- 75
+
+  obs %>%
+    mutate(
+      T = if_else(warm, 30, min_temp),
+      T = case_when(warm ~ 30, !warm ~ min_temp, is.na(warm) ~ 0),
+      H = if_else(humid, 75L, humid_hours) / 75,
+      H = case_when(humid ~ 75L, !humid ~ humid_hours, is.na(humid) ~ 35L) / 75,
+      H_shape = factor(if_else(is.na(humid), "Missing data", if_else(humid, "Humidity risk", "Safe levels")))
+      ## H_shape = addNA(if_else(humid, 1, 0), ifany = TRUE)
+    ) %>%
+    add_metadata() %>%
+    ggplot() +
+    geom_point(
+      aes(
+        x = day(ob_time),
+        y = Site_Name,
+        size = H,
+        shape = H_shape,
+        fill = T
+      )
+    ) +
+    scale_shape_manual(
+      values = c(
+        "Missing data" = "cross",
+        "Safe levels" = "circle filled",
+        "Humidity risk" = "square filled",
+        "Temperature risk" = "circle",
+        "Blight risk" = "square"
+      ),
+      drop = FALSE
+    ) +
+    scico::scale_fill_scico(palette = "bilbao", limits = c(-6, 30)) +
+    xlab(NULL) + ylab(NULL) +
+    theme(panel.grid = element_blank())
+}
+
+site_data %>% hutton() %>% filter(month(ob_time) == 9) %>% plot.hutton()
+
+legend_icons <- c(
+  "Safe humidity" = "circle filled",
+  "Safe temperature"
+)
 
 add_metadata <- function(obs) {
   obs %>% left_join(site_metadata, by = c("Site" = "Site_ID"))
@@ -137,6 +186,7 @@ ui <- fluidPage(
       6,
       fluidRow(
         plotOutput("primary"),
+        ## TODO: Add selector for summary function
         selectInput(
           "variable",
           "Select Weather Variable",
@@ -164,11 +214,23 @@ ui <- fluidPage(
           choices = time_aggregation(as.names = TRUE),
           selected = "days"
         )
+      ),
+      fluidRow(
+        plotOutput("hutton"),
+        sliderInput(
+          "month_selector",
+          "Choose month",
+          min = date("2022-01-01"),
+          max = date("2022-11-01"), # TODO: make 12?
+          value = date("2022-11-01"),
+          ## step = "months",
+          timeFormat = "%b"
+        )
       )
     ),
     column(
       6,
-      leafletOutput("map", height = 1000)
+      leafletOutput("map", height = 500)
     )
   )
 )
@@ -180,12 +242,21 @@ server <- function(input, output, session) {
   selected <- reactiveVal(c("Heathrow", "Abbotsinch"))
   metadata <- reactive(site_metadata)
   filtered <- reactive(metadata() %>% filter(Site_Name %in% selected()))
-
+  ## TODO: reactive to generate filtered site_data
   output$primary <- renderPlot({
+    ## TODO: Decide plot dimensions and scale at here
     site_data %>%
       semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
       aggregate.primary(input$variable, input$t_rep, input$t_agg, max) %>%
       plot.primary("", input$t_rep, input$t_agg, input$range)
+  })
+
+  output$hutton <- renderPlot({
+    site_data %>%
+      semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
+      hutton() %>%
+      filter(month(ob_time) == month(input$month_selector)) %>%
+      plot.hutton()
   })
 
   output$map <- renderLeaflet({

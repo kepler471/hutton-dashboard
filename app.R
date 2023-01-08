@@ -131,16 +131,28 @@ plot.primary <- function(obs, variable, t_rep, t_agg, t_range = "years") {
 
 #' Plot the Hutton criteria for a selected weather station
 plot.hutton <- function(obs) {
+  ## TODO: Could make the colour schemes the same
   temp_lim <- 30
   hum_lim <- 75
 
+  legend_icons <- c(
+    "Low hum/low temp" = "circle filled",
+    ## "Low hum/mid temp" = "circle filled",
+    "Low hum/critical temp" = "circle filled",
+    ## "Mid hum/low temp" = "circle filled",
+    ## "Mid hum/mid temp" = "circle filled",
+    ## "Mid hum/critical temp" = "circle filled",
+    "Critical hum/low temp" = "square filled",
+    ## "Critical hum/mid temp" = "square filled",
+    "Critical hum/critical temp" = "square filled",
+    "Missing data" = "cross"
+  )
+
   obs %>%
     mutate(
-      T = if_else(warm, 30, min_temp),
       T = case_when(warm ~ 30, !warm ~ min_temp, is.na(warm) ~ 0),
-      H = if_else(humid, 75L, humid_hours) / 75,
       H = case_when(humid ~ 75L, !humid ~ humid_hours, is.na(humid) ~ 35L) / 75,
-      H_shape = factor(if_else(is.na(humid), "Missing data", if_else(humid, "Humidity risk", "Safe levels")))
+      H_shape = factor(if_else(is.na(humid), "Missing data", if_else(humid, "Critical hum/low temp", "Low hum/low temp")))
       ## H_shape = addNA(if_else(humid, 1, 0), ifany = TRUE)
     ) %>%
     add_metadata() %>%
@@ -155,17 +167,23 @@ plot.hutton <- function(obs) {
       )
     ) +
     scale_shape_manual(
-      values = c(
-        "Missing data" = "cross",
-        "Safe levels" = "circle filled",
-        "Humidity risk" = "square filled",
-        "Temperature risk" = "circle",
-        "Blight risk" = "square"
-      ),
+      values = legend_icons,
       drop = FALSE
     ) +
     scico::scale_fill_scico(palette = "bilbao", limits = c(-6, 30)) +
     xlab(NULL) + ylab(NULL) +
+    guides(
+      fill = "none",
+      size = "none",
+      shape = guide_legend(
+        override.aes = list(
+          values = legend_icons,
+          size = c(2, 2, 4, 4, 3),
+          fill = c(rep(scico(5, palette = "bilbao")[c(2,5)], 2), 1)
+        ),
+        title = waiver()
+      )
+    ) +
     theme(panel.grid = element_blank())
 }
 
@@ -183,7 +201,7 @@ add_metadata <- function(obs) {
 ui <- fluidPage(
   fluidRow(
     column(
-      6,
+      8,
       fluidRow(
         plotOutput("primary"),
         ## TODO: Add selector for summary function
@@ -229,8 +247,8 @@ ui <- fluidPage(
       )
     ),
     column(
-      6,
-      leafletOutput("map", height = 500)
+      4,
+      leafletOutput("map", height = 1000)
     )
   )
 )

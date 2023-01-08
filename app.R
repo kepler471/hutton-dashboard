@@ -173,8 +173,27 @@ plot.hutton <- function(obs) {
     scico::scale_fill_scico(palette = "bilbao", limits = c(-6, 30)) +
     xlab(NULL) + ylab(NULL) +
     guides(
-      fill = "none",
-      size = "none",
+      fill = guide_legend(
+        title = "Low to critical temperature",
+        title.position = "top",
+        direction = "horizontal",
+        label = FALSE,
+        override.aes = list(
+          size = rep(4, 4),
+          shape = rep("circle filled", 4),
+          fill = scico(6, palette = "bilbao")[c(2:4, 6)]
+        )
+      ),
+      size = guide_legend(
+        title = "Low to critical humidity",
+        title.position = "top",
+        direction = "horizontal",
+        label = FALSE,
+        override.aes = list(
+          size = c(2:6),
+          shape = c(rep("circle filled", 4), "square filled")
+        )
+      ),
       shape = guide_legend(
         override.aes = list(
           values = legend_icons,

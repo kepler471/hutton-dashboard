@@ -54,9 +54,9 @@ hutton <- function(obs, t_agg = "days") {
     ) %>%
     mutate(
       warm = pmin(lag(min_temp, n = 1), lag(min_temp, n = 2)) >= 10,
-      warm.n = lag(min_temp, n = 1) + lag(min_temp, n = 2),
+      warm.n = (lag(min_temp, n = 1) + lag(min_temp, n = 2)) / 2,
       humid = pmin(lag(humid_hours, n = 1), lag(humid_hours, n = 2)) >= 6,
-      humid.n = lag(humid_hours, n = 1) + lag(humid_hours, n = 2)
+      humid.n = (lag(humid_hours, n = 1) + lag(humid_hours, n = 2)) / 2
     ) %>%
     ungroup()
 }

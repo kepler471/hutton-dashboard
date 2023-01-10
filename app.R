@@ -1,8 +1,7 @@
 library(tidyverse)
+library(lubridate)
 library(shiny)
 library(shinyalert)
-library(fs)
-library(lubridate)
 library(leaflet)
 
 ## TODO: include potato icons?
@@ -31,19 +30,44 @@ site_data <- map_dfr(
   drop_na(ob_time) %>%
   select(-c(hour, day, month))
 
-time_aggregation <- function(as.names = FALSE) {
+#' Reference of the ordering of the time units
+#'
+#' Returns the numerical value of the time units, or with `as.names = TRUE` will
+#' return the formatted name of the unit.
+time_aggregation <- function(as.names = FALSE, formatter = stringr::str_to_title) {
   labels <- c("hours", "days", "weeks", "months", "years")
   values <- c(0, 1, 2, 3, 4)
-  if (as.names) return(setNames(labels, str_to_title(labels)))
+  if (as.names) return(setNames(labels, formatter(labels)))
 
   setNames(values, labels)
 }
 
-#' Calculate the Hutton Criteria
+add_metadata <- function(obs) {
+  obs %>% left_join(site_metadata, by = c("Site" = "Site_ID"))
+}
+
+#' Calculate the Hutton criteria
 #'
-#' @description TODO
+#' TODO: remove t_agg here, definition is in days
+#' For a given unit of time `t_agg`, finds the minimum temperature, and the
+#' number of hours above the humidity threshold, for the previous two units of
+#' time. The Hutton criteria are reached when both the previous two days have a
+#' minimum temperature of at leat 10C, and at least 6 hours of relative humidity
+#' >= 90%.
 #'
 #' @param obs Data Frame of weather observations
+#'
+#' @return Data Frame with Hutton criteria calculations for each time unit
+#' \describe{
+#'   \item{Site}{unique site id}
+#'   \item{ob_time}{time of measurement}
+#'   \item{min_temp}{minimum temperature at ob_time}
+#'   \item{humid_hours}{number of hours above humidity threshold at ob_time}
+#'   \item{warm}{were ob_time - 1 and ob_time_2 "warm"?}
+#'   \item{warm.n}{average min_temp of ob_time - 1 and ob_time - 2}
+#'   \item{humid}{were ob_time - 1 and ob_time_2 "humid"?}
+#'   \item{humid.n}{average humid_hours of ob_time - 1 and ob_time - 2}
+#' }
 hutton <- function(obs, t_agg = "days") {
   obs %>%
     mutate(ob_time = floor_date(ob_time, t_agg)) %>%
@@ -213,10 +237,6 @@ legend_icons <- c(
   "Safe temperature"
 )
 
-add_metadata <- function(obs) {
-  obs %>% left_join(site_metadata, by = c("Site" = "Site_ID"))
-}
-
 ui <- fluidPage(
   fluidRow(
     column(
@@ -288,6 +308,7 @@ server <- function(input, output, session) {
       plot.primary("", input$t_rep, input$t_agg, input$range)
   })
 
+  ## TODO: add a toggle to show/hide wamr & humid variables
   output$hutton <- renderPlot({
     site_data %>%
       semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
@@ -316,6 +337,7 @@ server <- function(input, output, session) {
       )
   })
 
+  ## TODO: Try freezeReactiveValue for better performance/no flickering
   observeEvent(
     input$map_marker_click,
     {

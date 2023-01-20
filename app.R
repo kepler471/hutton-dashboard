@@ -138,8 +138,8 @@ plot.primary <- function(obs, variable, t_rep, t_agg, t_range = "years") {
     "days months" = mday,
     "days years" = identity, # Calendar time
     "hours days" = hour,
-    "hours weeks" = function(x) (wday(x, week_start = 1) - 1) * hour(x),
-    "hours months" = function(x) (mday(x) - 1) * hour(x),
+    "hours weeks" = function(x) (24 * (wday(ob_time, week_start = 1) - 1)) + hour(x),
+    "hours months" = function(x) (24 * (mday(x) - 1)) + hour(x),
     "weeks years" = week,
     "months years" = month
   )

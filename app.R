@@ -3,6 +3,9 @@ library(lubridate)
 library(shiny)
 library(shinyalert)
 library(leaflet)
+library(scico)
+library(glue)
+library(shinyWidgets)
 
 ## TODO: include potato icons?
 ## TODO: try https://rstudio.github.io/gridlayout/
@@ -154,7 +157,7 @@ plot.primary <- function(obs, variable, t_rep, t_agg, t_range = "years") {
 }
 
 #' Plot the Hutton criteria for a selected weather station
-plot.hutton <- function(obs) {
+plot.hutton <- function(obs, only_hutton = FALSE) {
   ## TODO: Could make the colour schemes the same
   temp_lim <- 30
   hum_lim <- 75
@@ -172,6 +175,12 @@ plot.hutton <- function(obs) {
     "Missing data" = "cross"
   )
 
+  ## TODO: add a toggle to show only points with full Hutton criteria
+  if (only_hutton) {
+    obs <- filter(obs, warm & humid)
+  }
+
+  ## TODO: document the magic numbers here
   obs %>%
     mutate(
       T = case_when(warm ~ 30, !warm ~ min_temp, is.na(warm) ~ 0),
@@ -230,21 +239,10 @@ plot.hutton <- function(obs) {
     theme(panel.grid = element_blank())
 }
 
-site_data %>% hutton() %>% filter(month(ob_time) == 9) %>% plot.hutton()
-
-legend_icons <- c(
-  "Safe humidity" = "circle filled",
-  "Safe temperature"
-)
-
 ui <- fluidPage(
-  fluidRow(
-    column(
-      8,
-      fluidRow(
-        plotOutput("primary"),
-        ## TODO: Add selector for summary function
-        selectInput(
+  sidebarLayout(
+    sidebarPanel(
+      selectInput(
           "variable",
           "Select Weather Variable",
           choices = c("Wind speed (knots)" = "wind_speed",
@@ -253,48 +251,49 @@ ui <- fluidPage(
                       "Visibility (m)" = "visibility"),
           selected = "air_temperature"
         ),
-        selectInput(
+      selectInput(
           "range",
           "Date Range",
           choices = time_aggregation(as.names = TRUE),
           selected = "years"
         ),
-        selectInput(
-          "t_agg",
-          "Time Aggregation",
-          choices = time_aggregation(as.names = TRUE),
-          selected = "days"
-        ),
-        selectInput(
-          "t_rep",
-          "Time Representation",
-          choices = time_aggregation(as.names = TRUE),
-          selected = "days"
-        )
+      selectInput(
+        "t_agg",
+        "Time Aggregation",
+        choices = time_aggregation(as.names = TRUE),
+        selected = "days"
       ),
-      fluidRow(
-        plotOutput("hutton"),
-        sliderInput(
-          "month_selector",
-          "Choose month",
-          min = date("2022-01-01"),
-          max = date("2022-11-01"), # TODO: make 12?
-          value = date("2022-11-01"),
-          ## step = "months",
-          timeFormat = "%b"
-        )
+      selectInput(
+        "t_rep",
+        "Time Representation",
+        choices = time_aggregation(as.names = TRUE),
+        selected = "days"
+      ),
+      leafletOutput("map", height = 1000)
+    ),
+    mainPanel(
+      plotOutput("primary"),
+      plotOutput("hutton"),
+      sliderInput(
+        "month_selector",
+        "Choose month",
+        min = date("2022-01-01"),
+        max = date("2022-11-01"), # TODO: make 12?
+        value = date("2022-11-01"),
+        ## step = "months",
+        timeFormat = "%b"
       )
     ),
-    column(
-      4,
-      leafletOutput("map", height = 1000)
-    )
+    position = "right"
   )
 )
 
 server <- function(input, output, session) {
+  ## TODO: Use freeze to remove the flickering
   ## TODO: Create the UI inputs as reactives with renderUI. Use this to limit
   ##  the possible combinations of time units and ranges
+
+  max_stations <- 5
 
   selected <- reactiveVal(c("Heathrow", "Abbotsinch"))
   metadata <- reactive(site_metadata)
@@ -357,8 +356,8 @@ server <- function(input, output, session) {
       } else {
         ## Show error thax max limit is reached
         shinyalert(
-          text = paste(
-            "There is a maximum of", 5, "weather stations",
+          text = glue(
+            "You may select a maximum of {max_stations} weather stations. ",
             "Please deselect a station to make room for the one you want"
           ),
           size = "xs",

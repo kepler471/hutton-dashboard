@@ -6,6 +6,7 @@ library(leaflet)
 library(scico)
 library(glue)
 library(shinyWidgets)
+library(DT)
 
 ## TODO: include potato icons?
 ## TODO: try https://rstudio.github.io/gridlayout/
@@ -269,20 +270,29 @@ ui <- fluidPage(
         choices = time_aggregation(as.names = TRUE),
         selected = "days"
       ),
-      leafletOutput("map", height = 1000)
-    ),
-    mainPanel(
-      plotOutput("primary"),
-      plotOutput("hutton"),
       sliderInput(
         "month_selector",
-        "Choose month",
+        "Choose month to check for Hutton Criteria",
         min = date("2022-01-01"),
         max = date("2022-11-01"), # TODO: make 12?
         value = date("2022-11-01"),
         ## step = "months",
         timeFormat = "%b"
-      )
+      ),
+      h3("Download"),
+      ## TODO: centre these buttons, and provide whitespace below
+      fluidRow(
+        actionButton("download_csv", "Past Week Summary Table [csv]"),
+        actionButton("download_Rmd", "All Outputs [docx]")
+      ),
+      leafletOutput("map", height = "600px")
+    ),
+    mainPanel(
+      plotOutput("primary"),
+      plotOutput("hutton"),
+      ## TODO: format figures to lower s.f. in table output
+      ## TODO: remove search from table
+      dataTableOutput("last_week"),
     ),
     position = "right"
   )
@@ -296,8 +306,8 @@ server <- function(input, output, session) {
   max_stations <- 5
 
   selected <- reactiveVal(c("Heathrow", "Abbotsinch"))
-  metadata <- reactive(site_metadata)
-  filtered <- reactive(metadata() %>% filter(Site_Name %in% selected()))
+  filtered <- reactive(site_metadata %>% filter(Site_Name %in% selected()))
+
   ## TODO: reactive to generate filtered site_data
   output$primary <- renderPlot({
     ## TODO: Decide plot dimensions and scale at here
@@ -319,7 +329,7 @@ server <- function(input, output, session) {
   output$map <- renderLeaflet({
     ## TODO: use Stadia.AlidadeSmooth tileset
     leaflet(
-      data = metadata() %>%
+      data = site_metadata %>%
         mutate(colour = if_else(Site_Name %in% selected(), "green", "red")),
       options = leafletOptions(
         zoomControl = FALSE,
@@ -333,6 +343,22 @@ server <- function(input, output, session) {
         label = ~Site_Name,
         layerId = ~Site_ID,
         color = ~colour
+      )
+  })
+
+  output$last_week <- DT::renderDataTable({
+    site_data %>%
+      semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
+      left_join(site_metadata %>% select(Site_ID, Site_Name), by = c("Site" = "Site_ID")) %>%
+      filter(ob_time >= date("2022-11-24")) %>% # TODO: calculate "latest_date" then go 6 days back
+      mutate(ob_time = as_date(ob_time)) %>%
+      rename(date = ob_time) %>%
+      group_by(Site_Name, date) %>%
+      summarise(
+        across(
+          c(wind_speed, air_temperature, rltv_hum, visibility),
+          ~ mean(., na.rm = TRUE)
+        )
       )
   })
 
@@ -377,7 +403,7 @@ server <- function(input, output, session) {
 
       leafletProxy(
         "map",
-        data = metadata() %>%
+        data = site_metadata %>%
           ## TODO: Make colour of marker the same as the plot colour
           mutate(colour = if_else(Site_Name %in% selected(), "green", "red"))
       ) %>%

@@ -52,12 +52,11 @@ add_metadata <- function(obs) {
 
 #' Calculate the Hutton criteria
 #'
-#' TODO: remove t_agg here, definition is in days
-#' For a given unit of time `t_agg`, finds the minimum temperature, and the
-#' number of hours above the humidity threshold, for the previous two units of
-#' time. The Hutton criteria are reached when both the previous two days have a
-#' minimum temperature of at leat 10C, and at least 6 hours of relative humidity
-#' >= 90%.
+#'
+#' For a given day, finds the minimum temperature, and the number of hours above
+#' the humidity threshold, for the previous two days The Hutton criteria are
+#' reached when both the previous two days have a minimum temperature of at leat
+#' 10C, and at least 6 hours of relative humidity >= 90%.
 #'
 #' @param obs Data Frame of weather observations
 #'
@@ -72,7 +71,7 @@ add_metadata <- function(obs) {
 #'   \item{humid}{were ob_time - 1 and ob_time_2 "humid"?}
 #'   \item{humid.n}{average humid_hours of ob_time - 1 and ob_time - 2}
 #' }
-hutton <- function(obs, t_agg = "days") {
+hutton <- function(obs) {
   obs %>%
     mutate(ob_time = floor_date(ob_time, t_agg)) %>%
     group_by(Site, ob_time) %>%
@@ -101,10 +100,12 @@ hutton <- function(obs, t_agg = "days") {
 #' @param t_agg The unit of time for aggregation
 #' @param .fn Function to compute summary statistic on `variable`. Must accept
 #'  `na.rm` as a second arg.
-aggregate.primary <- function(obs, variable, t_rep, t_agg, .fn) {
-  ## If aggregation and representation are hourly, there is no calculation to
-  ## make as this is already the structure of the data.
-  if (t_rep == "hours" & t_agg == "hours") return(obs)
+aggregate.primary <- function(obs, variable, t_agg, t_rep, .fn) {
+  ## If representation is hourly and the aggregation is yearly, there is no
+  ## calculation to make as this is already the structure of the data.
+  if (t_agg == "hours" & t_rep == "years") {
+    return(obs %>% mutate(stat = .data[[variable]]))
+  }
 
   units <- time_aggregation()
 
@@ -112,7 +113,9 @@ aggregate.primary <- function(obs, variable, t_rep, t_agg, .fn) {
   ## represented (t_rep) in the x-axis. If this situation is given, set agg to
   ## be equal to t_rep.
   ## NOTE: This should/will be handled by the server
-  if (units[t_agg] < units[t_rep]) t_agg <- t_rep
+  if (units[t_agg] >= units[t_rep]) {
+    stop("Time aggregation needs to be smaller than representation")
+  }
 
   obs %>%
     mutate(ob_time = floor_date(ob_time, t_agg)) %>%
@@ -134,16 +137,17 @@ aggregate.primary <- function(obs, variable, t_rep, t_agg, .fn) {
 #'  e.g. days in the week (t_rep = "days", t_range = "weeks") -> [1:7]
 #'  e.g. days in the month (t_rep = "days", t_range = "months") -> [1:31]
 #' @param t_agg The unit of time for aggregation
-plot.primary <- function(obs, variable, t_rep, t_agg, t_range = "years") {
-  choice <- paste(t_rep, t_range)
+plot.primary <- function(obs, variable, t_agg, t_rep) {
+  choice <- paste(t_agg, t_rep)
 
   x_rep <- switch(choice,
-    "days weeks" = function(x) wday(x, week_start = 1),
-    "days months" = mday,
-    "days years" = identity, # Calendar time
     "hours days" = hour,
     "hours weeks" = function(x) (24 * (wday(ob_time, week_start = 1) - 1)) + hour(x),
+    "days weeks" = function(x) wday(x, week_start = 1),
     "hours months" = function(x) (24 * (mday(x) - 1)) + hour(x),
+    "days months" = mday,
+    "hours years" = identity,
+    "days years" = as_date,
     "weeks years" = week,
     "months years" = month
   )
@@ -154,6 +158,9 @@ plot.primary <- function(obs, variable, t_rep, t_agg, t_range = "years") {
     ggplot(aes(x = x, y = stat, color = Site_Name)) # TODO: dynamic naming of stat
 
   ## TODO: handle choice of line/points
+  if (choice %in% c("hours years", "days years")) {
+    return(p + geom_line())
+  }
   return(p + geom_point())
 }
 
@@ -253,22 +260,16 @@ ui <- fluidPage(
         selected = "air_temperature"
       ),
       selectInput(
-        "range",
-        "Date Range",
-        choices = time_aggregation(as.names = TRUE),
-        selected = "years"
-      ),
-      selectInput(
         "t_agg",
         "Time Aggregation",
         choices = time_aggregation(as.names = TRUE),
-        selected = "days"
+        selected = "hours"
       ),
       selectInput(
         "t_rep",
         "Time Representation",
         choices = time_aggregation(as.names = TRUE),
-        selected = "days"
+        selected = "years"
       ),
       sliderInput(
         "month_selector",
@@ -322,8 +323,8 @@ server <- function(input, output, session) {
   primary_plot <- reactive({
     site_data %>%
       semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
-      aggregate.primary(input$variable, input$t_rep, input$t_agg, max) %>%
-      plot.primary("", input$t_rep, input$t_agg, input$range)
+      aggregate.primary(input$variable, input$t_agg, input$t_rep, max) %>%
+      plot.primary("", input$t_rep, input$t_agg)
   })
 
   ## TODO: add a toggle to show/hide wamr & humid variables
@@ -358,10 +359,7 @@ server <- function(input, output, session) {
   last_week <- reactive({
     site_data %>%
       semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
-      left_join(
-        filtered() %>% select(Site_ID, Site_Name),
-        by = c("Site" = "Site_ID")
-      ) %>%
+      add_metadata() %>%
       filter(ob_time >= date("2022-11-24")) %>% # TODO: calculate "latest_date" then go 6 days back
       mutate(ob_time = as_date(ob_time)) %>%
       rename(date = ob_time) %>%
@@ -395,7 +393,7 @@ server <- function(input, output, session) {
       params <- list(
         primary = primary_plot(),
         hutton = hutton_plot(),
-        last_week = last_week()
+        last_week = last_week(),
         map = leaflet_map()
       )
       rmarkdown::render(

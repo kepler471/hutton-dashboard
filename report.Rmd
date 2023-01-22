@@ -1,0 +1,25 @@
+---
+title: "Hutton Criteria Report"
+output: word_document
+params:
+  primary: NA
+  hutton: NA
+  last_week: NA
+---
+
+```{r}
+params$primary
+```
+
+```{r}
+params$hutton
+```
+
+```{r}
+params$last_week
+```
+
+
+```{r}
+params$map
+```

@@ -244,20 +244,20 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       selectInput(
-          "variable",
-          "Select Weather Variable",
-          choices = c("Wind speed (knots)" = "wind_speed",
-                      "Air temperature (C)" = "air_temperature",
-                      "Relative humidity (%)" = "rltv_hum",
-                      "Visibility (m)" = "visibility"),
-          selected = "air_temperature"
-        ),
+        "variable",
+        "Select Weather Variable",
+        choices = c("Wind speed (knots)" = "wind_speed",
+                    "Air temperature (C)" = "air_temperature",
+                    "Relative humidity (%)" = "rltv_hum",
+                    "Visibility (m)" = "visibility"),
+        selected = "air_temperature"
+      ),
       selectInput(
-          "range",
-          "Date Range",
-          choices = time_aggregation(as.names = TRUE),
-          selected = "years"
-        ),
+        "range",
+        "Date Range",
+        choices = time_aggregation(as.names = TRUE),
+        selected = "years"
+      ),
       selectInput(
         "t_agg",
         "Time Aggregation",
@@ -282,8 +282,8 @@ ui <- fluidPage(
       h3("Download"),
       ## TODO: centre these buttons, and provide whitespace below
       fluidRow(
-        actionButton("download_csv", "Past Week Summary Table [csv]"),
-        actionButton("download_Rmd", "All Outputs [docx]")
+        downloadButton("download_csv", "Past Week Summary Table [csv]"),
+        downloadButton("download_Rmd", "All Outputs [docx]")
       ),
       leafletOutput("map", height = "600px")
     ),
@@ -293,11 +293,20 @@ ui <- fluidPage(
       ## TODO: format figures to lower s.f. in table output
       ## TODO: remove search from table
       dataTableOutput("last_week"),
-    ),
+      ),
     position = "right"
   )
 )
 
+##' .. content for \description{} (no empty lines) ..
+##'
+##' .. content for \details{} ..
+##' @title
+##' @param input
+##' @param output
+##' @param session
+##' @return
+##' @author Stelios Georgiou
 server <- function(input, output, session) {
   ## TODO: Use freeze to remove the flickering
   ## TODO: Create the UI inputs as reactives with renderUI. Use this to limit
@@ -309,8 +318,8 @@ server <- function(input, output, session) {
   filtered <- reactive(site_metadata %>% filter(Site_Name %in% selected()))
 
   ## TODO: reactive to generate filtered site_data
-  output$primary <- renderPlot({
-    ## TODO: Decide plot dimensions and scale at here
+  ## TODO: Decide plot dimensions and scale at here
+  primary_plot <- reactive({
     site_data %>%
       semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
       aggregate.primary(input$variable, input$t_rep, input$t_agg, max) %>%
@@ -318,7 +327,7 @@ server <- function(input, output, session) {
   })
 
   ## TODO: add a toggle to show/hide wamr & humid variables
-  output$hutton <- renderPlot({
+  hutton_plot <- reactive({
     site_data %>%
       semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
       hutton() %>%
@@ -326,7 +335,7 @@ server <- function(input, output, session) {
       plot.hutton()
   })
 
-  output$map <- renderLeaflet({
+  leaflet_map <- reactive({
     ## TODO: use Stadia.AlidadeSmooth tileset
     leaflet(
       data = site_metadata %>%
@@ -346,10 +355,13 @@ server <- function(input, output, session) {
       )
   })
 
-  output$last_week <- DT::renderDataTable({
+  last_week <- reactive({
     site_data %>%
       semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
-      left_join(site_metadata %>% select(Site_ID, Site_Name), by = c("Site" = "Site_ID")) %>%
+      left_join(
+        filtered() %>% select(Site_ID, Site_Name),
+        by = c("Site" = "Site_ID")
+      ) %>%
       filter(ob_time >= date("2022-11-24")) %>% # TODO: calculate "latest_date" then go 6 days back
       mutate(ob_time = as_date(ob_time)) %>%
       rename(date = ob_time) %>%
@@ -361,6 +373,38 @@ server <- function(input, output, session) {
         )
       )
   })
+
+  output$primary <- renderPlot(primary_plot())
+
+  output$hutton <- renderPlot(hutton_plot())
+
+  output$map <- renderLeaflet(leaflet_map())
+
+  output$last_week <- DT::renderDataTable(last_week())
+
+  output$download_csv <- downloadHandler(
+    filename = function() paste0("last_week", ".csv"),
+    content = function(file) write_csv(last_week(), file)
+  )
+
+  output$download_Rmd <- downloadHandler(
+    filename = "report.docx",
+    content = function(file) {
+      tempReport <- file.path(tempdir(), "report.Rmd")
+      file.copy("report.Rmd", tempReport, overwrite = TRUE)
+      params <- list(
+        primary = primary_plot(),
+        hutton = hutton_plot(),
+        last_week = last_week()
+        map = leaflet_map()
+      )
+      rmarkdown::render(
+                   tempReport, output_file = file,
+                   params = params,
+                   envir = new.env(parent = globalenv())
+                 )
+    }
+  )
 
   ## TODO: Try freezeReactiveValue for better performance/no flickering
   observeEvent(
@@ -431,6 +475,14 @@ shinyApp(ui, server)
 #'
 #' @note Might be more trouble than worth to use this, rather than just leaving
 #'  the code in the server function.
+#' .. content for \description{} (no empty lines) ..
+#'
+#' .. content for \details{} ..
+#' @title
+#' @param new_selection
+#' @param prev_selection
+#' @param max.length
+#' @return
 on_click <- function(new_selection, prev_selection, max.length = 5) {
   if (new_selection %in% prev_selection) {
     if (length(prev_selection > 1)) {

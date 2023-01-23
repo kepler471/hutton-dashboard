@@ -7,6 +7,7 @@ library(scico)
 library(glue)
 library(shinyWidgets)
 library(DT)
+library(ggthemes)
 
 ## TODO: include potato icons?
 
@@ -37,7 +38,7 @@ site_data <- map_dfr(
 #'
 #' Returns the numerical value of the time units, or with `as.names = TRUE` will
 #' return the formatted name of the unit.
-time_aggregation <- function(as.names = FALSE, formatter = stringr::str_to_title) {
+time_units <- function(as.names = FALSE, formatter = stringr::str_to_title) {
   labels <- c("hours", "days", "weeks", "months", "years")
   values <- c(0, 1, 2, 3, 4)
   if (as.names) return(setNames(labels, formatter(labels)))
@@ -88,6 +89,9 @@ hutton <- function(obs) {
 }
 
 #' Primary plot of weather observations
+#'
+#' @description TODO
+#' @details TODO
 #'
 #' @param obs Data Frame of weather observations
 #' @param variable The measurement to display
@@ -236,13 +240,13 @@ ui <- fluidPage(
       selectInput(
         "t_agg",
         "Time Aggregation",
-        choices = time_aggregation(as.names = TRUE),
+        choices = time_units(as.names = TRUE)[time_units() < time_units()["years"]],
         selected = "days"
       ),
       selectInput(
         "t_rep",
         "Time Representation",
-        choices = time_aggregation(as.names = TRUE),
+        choices = time_units(as.names = TRUE)[time_units() > time_units()["hours"]],
         selected = "years"
       ),
       selectInput(
@@ -375,9 +379,12 @@ server <- function(input, output, session) {
     }
   )
 
+  ## Limit choice of aggregation function based on Time Aggregation
   observeEvent(
     input$t_agg,
     {
+      ## If t_agg = "hours" is selected, don't offer any summary stat functions,
+      ## (no aggregation)
       if (input$t_agg == "hours") {
         updateSelectInput(
           inputId = "statistic",
@@ -391,6 +398,24 @@ server <- function(input, output, session) {
                       "Mean" = "mean")
         )
       }
+    }
+  )
+
+  ## Limit choice of Time Aggregation based on Time Representation
+  observeEvent(
+    input$t_rep,
+    {
+      valid_aggs <- time_units(TRUE)[time_units() < time_units()[input$t_rep]]
+
+      ## The "week" of the month can be ambiguous - don't allow this situation
+      if (input$t_rep == "months") {
+        valid_aggs <- valid_aggs[valid_aggs != "weeks"]
+      }
+
+      updateSelectInput(
+        inputId = "t_agg",
+        choices = valid_aggs
+      )
     }
   )
 

@@ -99,8 +99,6 @@ hutton <- function(obs) {
 #'  e.g. calendar date (`t_agg` = "days" *OR* "hours", `t_rep` = "years")
 plot.primary <- function(obs, variable, .fn, t_agg, t_rep) {
   variable <- unname(variable)
-  t_agg <- unname(t_agg)
-  t_rep <- unname(t_rep)
   choice <- paste(t_agg, t_rep)
 
   x_rep <- switch(choice,
@@ -118,6 +116,7 @@ plot.primary <- function(obs, variable, .fn, t_agg, t_rep) {
   p <- obs %>%
     mutate(ob_time = floor_date(ob_time, t_agg)) %>%
     group_by(Site, ob_time) %>%
+    ## TODO: na.rm = TRUE leads to some Inf values. How to deal with these?
     summarise({{ variable }} := .fn(.data[[variable]], na.rm = TRUE)) %>%
     ungroup(ob_time) %>%
     add_metadata() %>%
@@ -226,17 +225,19 @@ ui <- fluidPage(
                     "Visibility (m)" = "visibility"),
         selected = "air_temperature"
       ),
-      ## selectInput(
-      ##   "statistic",
-      ##   "Choose summary statistic",
-      ##   choices = c("Minimum" = min,
-      ##               "Maximum" = max)
-      ## ),
+      selectInput(
+        "statistic",
+        "Choose summary statistic",
+        choices = c("Minimum" = "min",
+                    "Maximum" = "max",
+                    "Mean" = "mean"),
+        selected = "mean"
+      ),
       selectInput(
         "t_agg",
         "Time Aggregation",
         choices = time_aggregation(as.names = TRUE),
-        selected = "hours"
+        selected = "days"
       ),
       selectInput(
         "t_rep",
@@ -253,13 +254,13 @@ ui <- fluidPage(
         ),
         selected = date("2022-11-01")
       ),
+      leafletOutput("map", height = "600px"),
       h3("Download"),
       ## TODO: centre these buttons, and provide whitespace below
       fluidRow(
         downloadButton("download_csv", "Past Week Summary Table [csv]"),
         downloadButton("download_Rmd", "All Outputs [docx]")
-      ),
-      leafletOutput("map", height = "600px")
+      )
     ),
     mainPanel(
       plotOutput("primary"),
@@ -281,19 +282,21 @@ ui <- fluidPage(
 #' @author Stelios Georgiou
 server <- function(input, output, session) {
   ## TODO: Use freeze to remove the flickering
-  ## TODO: Create the UI inputs as reactives with renderUI. Use this to limit
-  ##  the possible combinations of time units and ranges
 
   max_stations <- 5
 
   selected <- reactiveVal(c("Heathrow", "Abbotsinch"))
   filtered <- reactive(site_metadata %>% filter(Site_Name %in% selected()))
 
+  ## Wrapper for `identity` to allow it to work with the `na.rm` argument that
+  ## is used by summery stats functions
+  no_aggregation <- function(x, na.rm) identity(x)
+
   ## TODO: Decide plot dimensions and scale at here
   primary_plot <- reactive({
     site_data %>%
       semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
-      plot.primary(input$variable, min, input$t_agg, input$t_rep)
+      plot.primary(input$variable, get(input$statistic), input$t_agg, input$t_rep)
   })
 
   ## TODO: add a toggle to show/hide wamr & humid variables
@@ -362,14 +365,32 @@ server <- function(input, output, session) {
       params <- list(
         primary = primary_plot(),
         hutton = hutton_plot(),
-        last_week = last_week(),
-        map = leaflet_map()
+        last_week = last_week()
       )
       rmarkdown::render(
                    tempReport, output_file = file,
                    params = params,
                    envir = new.env(parent = globalenv())
                  )
+    }
+  )
+
+  observeEvent(
+    input$t_agg,
+    {
+      if (input$t_agg == "hours") {
+        updateSelectInput(
+          inputId = "statistic",
+          choices = c("Raw data (no aggregation)" = "no_aggregation")
+        )
+      } else {
+        updateSelectInput(
+          inputId = "statistic",
+          choices = c("Minimum" = "min",
+                      "Maximum" = "max",
+                      "Mean" = "mean")
+        )
+      }
     }
   )
 

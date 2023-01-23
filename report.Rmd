@@ -5,7 +5,6 @@ params:
   primary: NA
   hutton: NA
   last_week: NA
-  map: NA
 always_allow_html: true
 ---
  
@@ -20,9 +19,4 @@ params$hutton
 
 ```{r}
 params$last_week
-```
-
-
-```{r}
-params$map
 ```

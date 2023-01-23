@@ -5,7 +5,7 @@ account: kepler471
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 8098070
-bundleId: 6764170
+bundleId: 6764769
 url: https://kepler471.shinyapps.io/Hutton/
-when: 1674485590.89275
-lastSyncTime: 1674485590.89276
+when: 1674492730.56441
+lastSyncTime: 1674492730.56445

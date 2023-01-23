@@ -24,7 +24,8 @@ site_names <- setNames(site_metadata$Site_Name, site_metadata$Site_ID)
 #' Reference for the ordering of the time units
 #'
 #' Returns the numerical value of the time units, or with `as.names = TRUE` will
-#' return the formatted name of the unit.
+#' return the formatted name of the unit. Useful for limiting the valid time
+#' aggregations in UI selections.
 #' @param as.names Default = FALSE, to show numerical values. TRUE to show named
 #'   labels.
 #' @param formatter Function to format named labels
@@ -58,6 +59,7 @@ plot.primary <- function(obs, variable, .fn, t_agg, t_rep) {
   variable <- unname(variable)
   choice <- paste(t_agg, t_rep)
 
+  ## define a function to change how the data is represented in time
   x_rep <- switch(choice,
     "hours days" = hour,
     "hours weeks" = function(x) (24 * (wday(x, week_start = 1) - 1)) + hour(x),
@@ -97,7 +99,6 @@ plot.primary <- function(obs, variable, .fn, t_agg, t_rep) {
 }
 
 #' Calculate the Hutton criteria
-#'
 #'
 #' For a given day, finds the minimum temperature, and the number of hours above
 #' the humidity threshold, for the previous two days The Hutton criteria are
@@ -160,21 +161,18 @@ plot.hutton <- function(obs, only_hutton = FALSE) {
   temp_lim <- 30
   hum_lim <- 75
 
+  ## define the possible icon shapes.
+  ## Names are legend names
+  ## Values are ggplot2 geom_point type
   legend_icons <- c(
     "Low hum/low temp" = "circle filled",
-    ## "Low hum/mid temp" = "circle filled",
     "Low hum/critical temp" = "circle filled",
-    ## "Mid hum/low temp" = "circle filled",
-    ## "Mid hum/mid temp" = "circle filled",
-    ## "Mid hum/critical temp" = "circle filled",
     "Critical hum/low temp" = "square filled",
-    ## "Critical hum/mid temp" = "square filled",
-    ## "Critical hum/critical temp" = "square filled",
     "Hutton Criteria met" = "square filled",
     "Missing data" = "cross"
   )
 
-  ## TODO: add a toggle to show only points with full Hutton criteria
+  ## TODO: add a UI toggle to show only points with full Hutton criteria (WIP)
   if (only_hutton) {
     obs <- filter(obs, warm & humid)
   }
@@ -204,8 +202,10 @@ plot.hutton <- function(obs, only_hutton = FALSE) {
       values = legend_icons,
       drop = FALSE
     ) +
+    ## Set colour range
     scico::scale_fill_scico(palette = "bilbao", limits = c(-6, 30)) +
     xlab(NULL) + ylab(NULL) +
+    ## Manual Legends to describe plot components
     guides(
       fill = guide_legend(
         title = "Low to critical temperature",
@@ -318,7 +318,7 @@ ui <- fluidPage(
   )
 )
 
-#' Server
+#' App server
 #'
 #' @details The main objects in the application are the primary plot, the Hutton
 #'   plot, the data table, the map, and the inputs. The main outputs are bound
@@ -334,7 +334,9 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   max_stations <- 5
 
+  ## Store of the selected markers on the map
   selected <- reactiveVal(c("Heathrow", "Abbotsinch"))
+
   filtered <- reactive(site_metadata %>% filter(Site_Name %in% selected()))
 
   ## Wrapper for `identity` to allow it to work with the `na.rm` argument that
@@ -348,7 +350,6 @@ server <- function(input, output, session) {
   }) %>%
     bindCache(input$variable, input$statistic, input$t_agg, input$t_rep, filtered())
 
-  ## TODO: add a toggle to show/hide warm & humid variables
   hutton_plot <- reactive({
     site_data %>%
       semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
@@ -401,7 +402,7 @@ server <- function(input, output, session) {
       )
   })
 
-  datatable
+
   output$primary <- renderPlot(primary_plot()) %>% bindCache(primary_plot())
 
   output$hutton <- renderPlot(hutton_plot()) %>% bindCache(hutton_plot())
@@ -468,12 +469,13 @@ server <- function(input, output, session) {
   )
 
   ## Limit choice of Time Aggregation based on Time Representation
-  ## TODO: This can cause some momentary changing of plots, as shiny might be
-  ## making reactive changes one by one. Is there a way to have changes take
-  ## place instantly?
   observeEvent(
     input$t_rep,
     {
+      ## TODO: This can cause some momentary (visible) changing of plots, as shiny
+      ## might be making reactive changes one by one. Is there a way to have changes
+      ## take place instantly? Maybe forcing the t_agg var to something rather than
+      ## letting it reset might help?
       valid_aggs <- time_units(TRUE)[time_units() < time_units()[input$t_rep]]
 
       ## The "week" of the month can be ambiguous - don't allow this situation
@@ -527,6 +529,7 @@ server <- function(input, output, session) {
         )
       }
 
+      ## Update map markers
       leafletProxy(
         "map",
         data = site_metadata %>%

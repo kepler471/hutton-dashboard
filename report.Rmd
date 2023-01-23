@@ -9,7 +9,7 @@ always_allow_html: true
 fontsize: 9pt
 ---
  
-# Weather and monitoring of Hutton Criteria
+# Weather and monitoring of Hutton Criteria (2022)
 
 ##### Hutton Criteria
 A Hutton Criteria occurs when two consecutive days have a minimum temperature of 10°C, and at least six hours of relative humidity at or above 90%.
@@ -31,6 +31,7 @@ params$primary +
 params$hutton +
   ggplot2::scale_x_continuous(limits = c(1, 31), breaks = seq(1, 31, by = 10)) +
   ggplot2::theme(
+    title = element_text(size = 10),
     panel.grid = element_blank(),
     legend.position = "bottom",
     axis.text = element_text(size = 8),

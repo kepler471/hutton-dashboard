@@ -19,6 +19,7 @@ library(ggthemes)
 
 
 load("sites.RData")
+site_names <- setNames(site_metadata$Site_Name, site_metadata$Site_ID)
 
 #' Reference for the ordering of the time units
 #'
@@ -72,12 +73,12 @@ plot.primary <- function(obs, variable, .fn, t_agg, t_rep) {
   p <- obs %>%
     mutate(ob_time = floor_date(ob_time, t_agg)) %>%
     group_by(Site, ob_time) %>%
-    ## TODO: na.rm = TRUE leads to some Inf values. How to deal with these?
+    ## NOTE: na.rm = TRUE with min/max leads to some Inf values. How to deal with these?
     summarise({{ variable }} := .fn(.data[[variable]], na.rm = TRUE)) %>%
     ungroup(ob_time) %>%
     add_metadata() %>%
     mutate(x = x_rep(ob_time)) %>%
-    ggplot(aes(x = x, y = .data[[variable]], color = Site_Name)) # TODO: dynamic naming of stat
+    ggplot(aes(x = x, y = .data[[variable]], color = Site_Name))
 
   if (choice %in% c("hours years", "days years")) {
     p <- p + geom_line(size = 1, alpha = 0.75)
@@ -141,8 +142,12 @@ hutton <- function(obs) {
 #' Plot the Hutton criteria for a selected weather station
 #'
 #' @details A *dark* *square* denotes days where both Hutton Criteria have been
-#'   met. For when the criteria are not met, `warm.n` and `humid.n` are used as
-#'   a rough guess for how close the measurements are to the criteria. This
+#'   met.
+#'
+#' @note The following was intended functionality, but produced an error, so
+#'   just using the `min_temp` and `humid_hours` values for each day:
+#'   For when the criteria are not met, `warm.n` and `humid.n` are used as a
+#'   rough guess for how close the measurements are to the criteria. This
 #'   function uses some internal figures to set the size and colour scales of
 #'   the output. The colour scale is set to vary in darkness based on the
 #'   temperature (`warm.n` when temperature criteria `warm` is not met). The
@@ -152,7 +157,6 @@ hutton <- function(obs) {
 #'   display critical humidity (when `humid` is TRUE), and circles to show
 #'   non-critical. The size of these circles increase with `humid.n`
 plot.hutton <- function(obs, only_hutton = FALSE) {
-  ## TODO: Could make the colour schemes the same
   temp_lim <- 30
   hum_lim <- 75
 
@@ -175,10 +179,13 @@ plot.hutton <- function(obs, only_hutton = FALSE) {
     obs <- filter(obs, warm & humid)
   }
 
-  ## TODO: document the magic numbers here
+  ## NOTE: numbers in here are set to make the size and colour scales easily
+  ## distinguishable from critical humidity and temperatures
   obs %>%
     mutate(
+      ## T = case_when(warm ~ 30, !warm ~ warm.n, is.na(warm) ~ 0),
       T = case_when(warm ~ 30, !warm ~ min_temp, is.na(warm) ~ 0),
+      ## H = case_when(humid ~ 75L, !humid ~ as.integer(humid.n), is.na(humid) ~ 35L) / 75, # TODO: fix error here
       H = case_when(humid ~ 75L, !humid ~ humid_hours, is.na(humid) ~ 35L) / 75,
       H_shape = factor(if_else(is.na(humid), "Missing data", if_else(humid, "Critical hum/low temp", "Low hum/low temp")))
     ) %>%
@@ -234,6 +241,7 @@ plot.hutton <- function(obs, only_hutton = FALSE) {
     scale_y_discrete(position = "right") +
     scale_x_continuous(limits = c(1, 31), breaks = seq(1, 31, by = 1)) +
     theme(
+      title = element_text(hjust = 0.5, size = 16),
       panel.grid = element_blank(),
       legend.position = "left",
       axis.text = element_text(size = 14),
@@ -246,7 +254,7 @@ plot.hutton <- function(obs, only_hutton = FALSE) {
 #### Create app UI ####
 ui <- fluidPage(
   titlePanel(
-    h1("Looking for Hutton Criteria in Blighty (2022)", align = "center"),
+    h1("Monitoring blight in Blighty", align = "center"),
     windowTitle = "Hutton Dash"
   ),
   hr(),
@@ -319,8 +327,6 @@ ui <- fluidPage(
 #' @return
 #' @author Stelios Georgiou
 server <- function(input, output, session) {
-  ## TODO: Use freeze to remove the flickering
-
   max_stations <- 5
 
   selected <- reactiveVal(c("Heathrow", "Abbotsinch"))
@@ -330,27 +336,32 @@ server <- function(input, output, session) {
   ## is used by summery stats functions
   no_aggregation <- function(x, na.rm) identity(x)
 
-  ## TODO: Decide plot dimensions and scale at here
   primary_plot <- reactive({
     site_data %>%
       semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
       plot.primary(input$variable, get(input$statistic), input$t_agg, input$t_rep)
   })
 
-  ## TODO: add a toggle to show/hide wamr & humid variables
+  ## TODO: add a toggle to show/hide warm & humid variables
   hutton_plot <- reactive({
     site_data %>%
       semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
       hutton() %>%
       filter(month(ob_time) == month(input$month_selector)) %>%
-      plot.hutton()
+      plot.hutton() +
+      ggtitle(
+        paste(
+          "Monitoring warmth and humidity with the Hutton Criteria for",
+          as.character(format(as.Date(input$month_selector), "%B"))
+        )
+      )
   })
 
   leaflet_map <- reactive({
     ## TODO: use Stadia.AlidadeSmooth tileset
     leaflet(
       data = site_metadata %>%
-        mutate(colour = if_else(Site_Name %in% selected(), "green", "red")),
+        mutate(colour = if_else(Site_Name %in% selected(), "green", "grey")),
       options = leafletOptions(
         zoomControl = FALSE,
         maxZoom = 10,
@@ -390,8 +401,6 @@ server <- function(input, output, session) {
   output$map <- renderLeaflet(leaflet_map())
 
   output$last_week <- DT::renderDataTable({
-    ## TODO: format figures to lower s.f. in table output
-    ## TODO: remove search from table
     datatable(
       last_week(),
       options = list(
@@ -471,7 +480,6 @@ server <- function(input, output, session) {
     }
   )
 
-  ## TODO: Try freezeReactiveValue for better performance/no flickering
   observeEvent(
     input$map_marker_click,
     {
@@ -480,7 +488,6 @@ server <- function(input, output, session) {
       prev_selection <- selected()
       new_selection <- site_names[as.character(click$id)]
 
-      ## TODO: move logic out of server
       if (new_selection %in% prev_selection) {
         if (length(prev_selection > 1)) {
           ## Remove from selection
@@ -514,8 +521,9 @@ server <- function(input, output, session) {
       leafletProxy(
         "map",
         data = site_metadata %>%
-          ## TODO: Make colour of marker the same as the plot colour
-          mutate(colour = if_else(Site_Name %in% selected(), "green", "red"))
+          ## TODO: Make colour of marker the same as the plot colour. This
+          ## would make it easy to match the plot information to location on map
+          mutate(colour = if_else(Site_Name %in% selected(), "green", "gray"))
       ) %>%
         clearMarkers() %>% # TODO: does this need to be optimised? maybe just remove the edited markers
         addCircleMarkers(

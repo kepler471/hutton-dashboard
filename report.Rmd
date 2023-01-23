@@ -6,17 +6,44 @@ params:
   hutton: NA
   last_week: NA
 always_allow_html: true
+fontsize: 9pt
 ---
  
+# Weather and monitoring of Hutton Criteria
 
-```{r}
-params$primary
+##### Hutton Criteria
+A Hutton Criteria occurs when two consecutive days have a minimum temperature of 10°C, and at least six hours of relative humidity at or above 90%.
+
+\newpage
+
+### Plot of weather observation for selected weather stations
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+params$primary +
+  ggplot2::theme(
+      legend.title = element_blank(),
+      legend.text = element_text(size = 8),
+      legend.position = "bottom"
+    )
 ```
 
-```{r}
-params$hutton
+### Visualisation of Hutton Criteria for selected weather stations
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+params$hutton +
+  ggplot2::scale_x_continuous(limits = c(1, 31), breaks = seq(1, 31, by = 10)) +
+  ggplot2::theme(
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    axis.text = element_text(size = 8),
+    axis.text.y.right = element_text(angle = 90, hjust = 0.5),
+    legend.text = element_text(size = 6),
+    legend.title = element_text(size = 8)
+  )
 ```
 
-```{r}
-params$last_week
+\newpage
+
+### Summary of observations from selected weather stations
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# TODO: make the table text smaller
+knitr::kable(params$last_week)
 ```

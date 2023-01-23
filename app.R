@@ -232,7 +232,7 @@ plot.hutton <- function(obs, only_hutton = FALSE) {
     ) +
     theme_minimal() +
     scale_y_discrete(position = "right") +
-    scale_x_continuous(limits = c(1, 31), breaks = as.integer(seq(1, 31, by = 1))) +
+    scale_x_continuous(limits = c(1, 31), breaks = seq(1, 31, by = 1)) +
     theme(
       panel.grid = element_blank(),
       legend.position = "left",

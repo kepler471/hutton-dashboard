@@ -9,7 +9,6 @@ library(shinyWidgets)
 library(DT)
 
 ## TODO: include potato icons?
-## TODO: try https://rstudio.github.io/gridlayout/
 
 data_path <- "data/"
 files <- dir(data_path)
@@ -73,7 +72,7 @@ add_metadata <- function(obs) {
 #' }
 hutton <- function(obs) {
   obs %>%
-    mutate(ob_time = floor_date(ob_time, t_agg)) %>%
+    mutate(ob_time = floor_date(ob_time, "days")) %>%
     group_by(Site, ob_time) %>%
     summarise(
       min_temp = min(air_temperature, na.rm = TRUE),
@@ -88,61 +87,25 @@ hutton <- function(obs) {
     ungroup()
 }
 
-#' Aggregate and summarise weather observations
-#'
-#' Is able to produce a single summary statistic (eg. max, min, mean) for a
-#'  given aggregate time unit.
-#'
-#' @param obs Data frame of weather observations
-#' @param sites List of sites to filter observations by
-#' @param variable The measurement to display
-#' @param t_rep The unit of time represented in the x axis
-#' @param t_agg The unit of time for aggregation
-#' @param .fn Function to compute summary statistic on `variable`. Must accept
-#'  `na.rm` as a second arg.
-aggregate.primary <- function(obs, variable, t_agg, t_rep, .fn) {
-  ## If representation is hourly and the aggregation is yearly, there is no
-  ## calculation to make as this is already the structure of the data.
-  if (t_agg == "hours" & t_rep == "years") {
-    return(obs %>% mutate(stat = .data[[variable]]))
-  }
-
-  units <- time_aggregation()
-
-  ## Time unit of aggregation (agg) cannot be smaller than the unit of time
-  ## represented (t_rep) in the x-axis. If this situation is given, set agg to
-  ## be equal to t_rep.
-  ## NOTE: This should/will be handled by the server
-  if (units[t_agg] >= units[t_rep]) {
-    stop("Time aggregation needs to be smaller than representation")
-  }
-
-  obs %>%
-    mutate(ob_time = floor_date(ob_time, t_agg)) %>%
-    group_by(Site, ob_time) %>%
-    summarise(stat = .fn(.data[[variable]], na.rm = TRUE)) %>%
-    ungroup(ob_time)
-}
-
 #' Primary plot of weather observations
 #'
-#' @note TODO: Can library(units) be used here to deal with the time units?
-#'  Alternatively, just make the `choice` variable and all the `t_*` variables
-#'  numeric, and include a lookup.
-#'
-#' @param obs Aggregated data frame of weather observations
+#' @param obs Data Frame of weather observations
 #' @param variable The measurement to display
-#' @param t_rep The unit of time represented in the x axis
-#' @param t_range The range of values that t_rep will be displayed within,
-#'  e.g. days in the week (t_rep = "days", t_range = "weeks") -> [1:7]
-#'  e.g. days in the month (t_rep = "days", t_range = "months") -> [1:31]
+#' @param .fn Summary function to apply to `variable`
 #' @param t_agg The unit of time for aggregation
-plot.primary <- function(obs, variable, t_agg, t_rep) {
+#' @param t_rep The unit of time represented in the x axis
+#'  e.g. days in the week (`t_agg` = "days", `t_rep` = "weeks") -> [1:7]
+#'  e.g. days in the month (`t_agg` = "days", `t_rep` = "months") -> [1:31]
+#'  e.g. calendar date (`t_agg` = "days" *OR* "hours", `t_rep` = "years")
+plot.primary <- function(obs, variable, .fn, t_agg, t_rep) {
+  variable <- unname(variable)
+  t_agg <- unname(t_agg)
+  t_rep <- unname(t_rep)
   choice <- paste(t_agg, t_rep)
 
   x_rep <- switch(choice,
     "hours days" = hour,
-    "hours weeks" = function(x) (24 * (wday(ob_time, week_start = 1) - 1)) + hour(x),
+    "hours weeks" = function(x) (24 * (wday(x, week_start = 1) - 1)) + hour(x),
     "days weeks" = function(x) wday(x, week_start = 1),
     "hours months" = function(x) (24 * (mday(x) - 1)) + hour(x),
     "days months" = mday,
@@ -153,19 +116,23 @@ plot.primary <- function(obs, variable, t_agg, t_rep) {
   )
 
   p <- obs %>%
+    mutate(ob_time = floor_date(ob_time, t_agg)) %>%
+    group_by(Site, ob_time) %>%
+    summarise({{ variable }} := .fn(.data[[variable]], na.rm = TRUE)) %>%
+    ungroup(ob_time) %>%
     add_metadata() %>%
     mutate(x = x_rep(ob_time)) %>%
-    ggplot(aes(x = x, y = stat, color = Site_Name)) # TODO: dynamic naming of stat
+    ggplot(aes(x = x, y = .data[[variable]], color = Site_Name)) # TODO: dynamic naming of stat
 
-  ## TODO: handle choice of line/points
   if (choice %in% c("hours years", "days years")) {
     return(p + geom_line())
   }
   return(p + geom_point())
 }
 
-#' Plot the Hutton criteria for a selected weather station
 plot.hutton <- function(obs, only_hutton = FALSE) {
+
+#' Plot the Hutton criteria for a selected weather station
   ## TODO: Could make the colour schemes the same
   temp_lim <- 30
   hum_lim <- 75
@@ -259,6 +226,12 @@ ui <- fluidPage(
                     "Visibility (m)" = "visibility"),
         selected = "air_temperature"
       ),
+      ## selectInput(
+      ##   "statistic",
+      ##   "Choose summary statistic",
+      ##   choices = c("Minimum" = min,
+      ##               "Maximum" = max)
+      ## ),
       selectInput(
         "t_agg",
         "Time Aggregation",
@@ -271,14 +244,14 @@ ui <- fluidPage(
         choices = time_aggregation(as.names = TRUE),
         selected = "years"
       ),
-      sliderInput(
+      selectInput(
         "month_selector",
         "Choose month to check for Hutton Criteria",
-        min = date("2022-01-01"),
-        max = date("2022-11-01"), # TODO: make 12?
-        value = date("2022-11-01"),
-        ## step = "months",
-        timeFormat = "%b"
+        choices = setNames(
+          seq(date("2022-01-01"), date("2022-11-01"), by = "months"),
+          format(seq(date("2022-01-01"), date("2022-11-01"), by = "months"), "%B %Y")
+        ),
+        selected = date("2022-11-01")
       ),
       h3("Download"),
       ## TODO: centre these buttons, and provide whitespace below
@@ -299,15 +272,13 @@ ui <- fluidPage(
   )
 )
 
-##' .. content for \description{} (no empty lines) ..
-##'
-##' .. content for \details{} ..
-##' @title
-##' @param input
-##' @param output
-##' @param session
-##' @return
-##' @author Stelios Georgiou
+#' Server
+#'
+#' @param input
+#' @param output
+#' @param session
+#' @return
+#' @author Stelios Georgiou
 server <- function(input, output, session) {
   ## TODO: Use freeze to remove the flickering
   ## TODO: Create the UI inputs as reactives with renderUI. Use this to limit
@@ -318,13 +289,11 @@ server <- function(input, output, session) {
   selected <- reactiveVal(c("Heathrow", "Abbotsinch"))
   filtered <- reactive(site_metadata %>% filter(Site_Name %in% selected()))
 
-  ## TODO: reactive to generate filtered site_data
   ## TODO: Decide plot dimensions and scale at here
   primary_plot <- reactive({
     site_data %>%
       semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
-      aggregate.primary(input$variable, input$t_agg, input$t_rep, max) %>%
-      plot.primary("", input$t_rep, input$t_agg)
+      plot.primary(input$variable, min, input$t_agg, input$t_rep)
   })
 
   ## TODO: add a toggle to show/hide wamr & humid variables
@@ -413,6 +382,7 @@ server <- function(input, output, session) {
       prev_selection <- selected()
       new_selection <- site_names[as.character(click$id)]
 
+      ## TODO: move logic out of server
       if (new_selection %in% prev_selection) {
         if (length(prev_selection > 1)) {
           ## Remove from selection
@@ -468,48 +438,3 @@ server <- function(input, output, session) {
 }
 
 shinyApp(ui, server)
-
-#' (WIP): Map marker click handler
-#'
-#' @note Might be more trouble than worth to use this, rather than just leaving
-#'  the code in the server function.
-#' .. content for \description{} (no empty lines) ..
-#'
-#' .. content for \details{} ..
-#' @title
-#' @param new_selection
-#' @param prev_selection
-#' @param max.length
-#' @return
-on_click <- function(new_selection, prev_selection, max.length = 5) {
-  if (new_selection %in% prev_selection) {
-    if (length(prev_selection > 1)) {
-      ## Remove from selection
-      return(prev_selection[prev_selection != new_selection])
-    }
-  } else if (length(prev_selection) < max.length) {
-    ## Add to selection
-    return(c(prev_selection, new_selection))
-  }
-    ## Show error thax max limit is reached
-  return(
-    shinyalert(
-      text = paste(
-        "There is a maximum of", 5, "weather stations",
-        "Please deselect a station to make room for the one you want"
-      ),
-      size = "xs",
-      closeOnEsc = TRUE,
-      closeOnClickOutside = TRUE,
-      html = FALSE,
-      type = "warning",
-      showConfirmButton = TRUE,
-      showCancelButton = FALSE,
-      confirmButtonText = "OK",
-      confirmButtonCol = "#AEDEF4",
-      timer = 0,
-      imageUrl = "",
-      animation = FALSE
-    )
-  )
-}

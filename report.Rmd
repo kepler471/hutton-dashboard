@@ -5,7 +5,10 @@ params:
   primary: NA
   hutton: NA
   last_week: NA
+  map: NA
+always_allow_html: true
 ---
+ 
 
 ```{r}
 params$primary

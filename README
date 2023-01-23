@@ -1,3 +1,5 @@
 This app is hosted at: https://kepler471.shinyapps.io/Hutton/
 
 Please see https://shiny.rstudio.com/articles/shinyapps.html for information on how to deploy to shinyapps.io
+
+The app is contained within `app.R`, and `data.R` was the script used to load data from CSVs.

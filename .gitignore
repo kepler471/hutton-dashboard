@@ -3,3 +3,8 @@
 *.log
 tmp/
 .RData
+*.dev
+*.pdf
+*.projectile
+.Rprofile
+data/

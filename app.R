@@ -40,44 +40,6 @@ add_metadata <- function(obs) {
   obs %>% left_join(site_metadata, by = c("Site" = "Site_ID"))
 }
 
-#' Calculate the Hutton criteria
-#'
-#'
-#' For a given day, finds the minimum temperature, and the number of hours above
-#' the humidity threshold, for the previous two days The Hutton criteria are
-#' reached when both the previous two days have a minimum temperature of at leat
-#' 10C, and at least 6 hours of relative humidity >= 90%.
-#'
-#' @param obs Data Frame of weather observations
-#'
-#' @return Data Frame with Hutton criteria calculations for each time unit
-#' \describe{
-#'   \item{`Site`}{unique site id}
-#'   \item{`ob_time`}{time of measurement}
-#'   \item{`min_temp`}{minimum temperature at ob_time}
-#'   \item{`humid_hours`}{number of hours above humidity threshold at ob_time}
-#'   \item{`warm`}{were ob_time - 1 and ob_time_2 "warm"?}
-#'   \item{`warm.n`}{average min_temp of ob_time - 1 and ob_time - 2}
-#'   \item{`humid`}{were ob_time - 1 and ob_time_2 "humid"?}
-#'   \item{`humid.n`}{average humid_hours of ob_time - 1 and ob_time - 2}
-#' }
-hutton <- function(obs) {
-  obs %>%
-    mutate(ob_time = floor_date(ob_time, "days")) %>%
-    group_by(Site, ob_time) %>%
-    summarise(
-      min_temp = min(air_temperature, na.rm = TRUE),
-      humid_hours = sum(rltv_hum >= 90.0)
-    ) %>%
-    mutate(
-      warm = pmin(lag(min_temp, n = 1), lag(min_temp, n = 2)) >= 10,
-      warm.n = (lag(min_temp, n = 1) + lag(min_temp, n = 2)) / 2,
-      humid = pmin(lag(humid_hours, n = 1), lag(humid_hours, n = 2)) >= 6,
-      humid.n = (lag(humid_hours, n = 1) + lag(humid_hours, n = 2)) / 2
-    ) %>%
-    ungroup()
-}
-
 #' Primary plot of weather observations
 #'
 #' @description TODO
@@ -126,14 +88,69 @@ plot.primary <- function(obs, variable, .fn, t_agg, t_rep) {
   p +
     scale_colour_brewer(palette = "Set2") +
     theme_minimal() +
-    labs(x = NULL)
+    labs(x = NULL) +
+    theme(
+      legend.title = element_blank(),
+      legend.text = element_text(size = 14)
+    )
 }
 
+#' Calculate the Hutton criteria
+#'
+#'
+#' For a given day, finds the minimum temperature, and the number of hours above
+#' the humidity threshold, for the previous two days The Hutton criteria are
+#' reached when both the previous two days have a minimum temperature of at leat
+#' 10C, and at least 6 hours of relative humidity >= 90%.
+#'
+#' @details Additional metrics `warm.n` and humid.n are included. These take an
+#'   average of the previous two days recordings for `min_temp` and
+#'   `humid_hours`, which can be used as a rough calculation for how warm or
+#'   humid it was.
+#'
+#' @param obs Data Frame of weather observations
+#'
+#' @return Data Frame with Hutton criteria calculations for each time unit
+#' \describe{
+#'   \item{`Site`}{unique site id}
+#'   \item{`ob_time`}{time of measurement}
+#'   \item{`min_temp`}{minimum temperature at ob_time}
+#'   \item{`humid_hours`}{number of hours above humidity threshold at ob_time}
+#'   \item{`warm`}{were ob_time - 1 and ob_time_2 "warm"?}
+#'   \item{`warm.n`}{average min_temp of ob_time - 1 and ob_time - 2}
+#'   \item{`humid`}{were ob_time - 1 and ob_time_2 "humid"?}
+#'   \item{`humid.n`}{average humid_hours of ob_time - 1 and ob_time - 2}
+#' }
+hutton <- function(obs) {
+  obs %>%
+    mutate(ob_time = floor_date(ob_time, "days")) %>%
+    group_by(Site, ob_time) %>%
+    summarise(
+      min_temp = min(air_temperature, na.rm = TRUE),
+      humid_hours = sum(rltv_hum >= 90.0)
+    ) %>%
+    mutate(
+      warm = pmin(lag(min_temp, n = 1), lag(min_temp, n = 2)) >= 10,
+      warm.n = (lag(min_temp, n = 1) + lag(min_temp, n = 2)) / 2,
+      humid = pmin(lag(humid_hours, n = 1), lag(humid_hours, n = 2)) >= 6,
+      humid.n = (lag(humid_hours, n = 1) + lag(humid_hours, n = 2)) / 2
+    ) %>%
+    ungroup()
+}
 
 #' Plot the Hutton criteria for a selected weather station
 #'
 #' @details A *dark* *square* denotes days where both Hutton Criteria have been
-#'   met.
+#'   met. For when the criteria are not met, `warm.n` and `humid.n` are used as
+#'   a rough guess for how close the measurements are to the criteria. This
+#'   function uses some internal figures to set the size and colour scales of
+#'   the output. The colour scale is set to vary in darkness based on the
+#'   temperature (`warm.n` when temperature criteria `warm` is not met). The
+#'   maximum value of a non-critical temperature is made different (light)
+#'   enough to easily distinguish it from a data point with critical
+#'   temperature. The humidity dictates the shape, with a square to clearly
+#'   display critical humidity (when `humid` is TRUE), and circles to show
+#'   non-critical. The size of these circles increase with `humid.n`
 plot.hutton <- function(obs, only_hutton = FALSE) {
   ## TODO: Could make the colour schemes the same
   temp_lim <- 30
@@ -148,7 +165,8 @@ plot.hutton <- function(obs, only_hutton = FALSE) {
     ## "Mid hum/critical temp" = "circle filled",
     "Critical hum/low temp" = "square filled",
     ## "Critical hum/mid temp" = "square filled",
-    "Critical hum/critical temp" = "square filled",
+    ## "Critical hum/critical temp" = "square filled",
+    "Hutton Criteria met" = "square filled",
     "Missing data" = "cross"
   )
 
@@ -163,7 +181,6 @@ plot.hutton <- function(obs, only_hutton = FALSE) {
       T = case_when(warm ~ 30, !warm ~ min_temp, is.na(warm) ~ 0),
       H = case_when(humid ~ 75L, !humid ~ humid_hours, is.na(humid) ~ 35L) / 75,
       H_shape = factor(if_else(is.na(humid), "Missing data", if_else(humid, "Critical hum/low temp", "Low hum/low temp")))
-      ## H_shape = addNA(if_else(humid, 1, 0), ifany = TRUE)
     ) %>%
     add_metadata() %>%
     ggplot() +
@@ -171,7 +188,7 @@ plot.hutton <- function(obs, only_hutton = FALSE) {
       aes(
         x = day(ob_time),
         y = Site_Name,
-        size = 2 * H,
+        size = H,
         shape = H_shape,
         fill = T
       )
@@ -210,11 +227,20 @@ plot.hutton <- function(obs, only_hutton = FALSE) {
           size = c(2, 2, 4, 4, 3),
           fill = c(rep(scico(5, palette = "bilbao")[c(2,5)], 2), 1)
         ),
-        title = waiver()
+        title = ""
       )
     ) +
-    theme(panel.grid = element_blank()) +
-    theme_minimal()
+    theme_minimal() +
+    scale_y_discrete(position = "right") +
+    scale_x_continuous(limits = c(1, 31), breaks = as.integer(seq(1, 31, by = 1))) +
+    theme(
+      panel.grid = element_blank(),
+      legend.position = "left",
+      axis.text = element_text(size = 14),
+      axis.text.y.right = element_text(angle = 90, hjust = 0.5),
+      legend.text = element_text(size = 14),
+      legend.title = element_text(size = 12)
+    )
 }
 
 #### Create app UI ####

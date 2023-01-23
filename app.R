@@ -10,34 +10,23 @@ library(DT)
 library(ggthemes)
 
 ## TODO: include potato icons?
+## TODO: Global App Options list?
+## e.g.
+## list(
+##   max_stations = 5,
+##   table_decimal_points = 2
+## )
 
-data_path <- "data/"
-files <- dir(data_path)
-site_files <- files[files != "Sites.csv"]
-site_paths <- paste0(data_path, site_files)
-site_metadata <- read_csv(paste0(data_path, "Sites.csv"))
-site_names <- setNames(site_metadata$Site_Name, site_metadata$Site_ID)
-site_data <- map_dfr(
-  site_paths,
-  ~ read_csv(
-    .x,
-    col_types = "ciiiddddi",
-    na = c("NA", NA)
-  )
-) %>%
-  ## Remove duplicate records where at least one is NA
-  arrange(Site, ob_time, rltv_hum) %>%
-  fill(rltv_hum, .direction = "down") %>%
-  ## Remove all duplicates
-  distinct() %>%
-  mutate(ob_time = dmy_hm(ob_time, quiet = TRUE)) %>%
-  drop_na(ob_time) %>%
-  select(-c(hour, day, month))
 
-#' Reference of the ordering of the time units
+load("sites.RData")
+
+#' Reference for the ordering of the time units
 #'
 #' Returns the numerical value of the time units, or with `as.names = TRUE` will
 #' return the formatted name of the unit.
+#' @param as.names Default = FALSE, to show numerical values. TRUE to show named
+#'   labels.
+#' @param formatter Function to format named labels
 time_units <- function(as.names = FALSE, formatter = stringr::str_to_title) {
   labels <- c("hours", "days", "weeks", "months", "years")
   values <- c(0, 1, 2, 3, 4)
@@ -46,6 +35,7 @@ time_units <- function(as.names = FALSE, formatter = stringr::str_to_title) {
   setNames(values, labels)
 }
 
+#' Add metadata to site data
 add_metadata <- function(obs) {
   obs %>% left_join(site_metadata, by = c("Site" = "Site_ID"))
 }
@@ -62,14 +52,14 @@ add_metadata <- function(obs) {
 #'
 #' @return Data Frame with Hutton criteria calculations for each time unit
 #' \describe{
-#'   \item{Site}{unique site id}
-#'   \item{ob_time}{time of measurement}
-#'   \item{min_temp}{minimum temperature at ob_time}
-#'   \item{humid_hours}{number of hours above humidity threshold at ob_time}
-#'   \item{warm}{were ob_time - 1 and ob_time_2 "warm"?}
-#'   \item{warm.n}{average min_temp of ob_time - 1 and ob_time - 2}
-#'   \item{humid}{were ob_time - 1 and ob_time_2 "humid"?}
-#'   \item{humid.n}{average humid_hours of ob_time - 1 and ob_time - 2}
+#'   \item{`Site`}{unique site id}
+#'   \item{`ob_time`}{time of measurement}
+#'   \item{`min_temp`}{minimum temperature at ob_time}
+#'   \item{`humid_hours`}{number of hours above humidity threshold at ob_time}
+#'   \item{`warm`}{were ob_time - 1 and ob_time_2 "warm"?}
+#'   \item{`warm.n`}{average min_temp of ob_time - 1 and ob_time - 2}
+#'   \item{`humid`}{were ob_time - 1 and ob_time_2 "humid"?}
+#'   \item{`humid.n`}{average humid_hours of ob_time - 1 and ob_time - 2}
 #' }
 hutton <- function(obs) {
   obs %>%
@@ -128,14 +118,23 @@ plot.primary <- function(obs, variable, .fn, t_agg, t_rep) {
     ggplot(aes(x = x, y = .data[[variable]], color = Site_Name)) # TODO: dynamic naming of stat
 
   if (choice %in% c("hours years", "days years")) {
-    return(p + geom_line())
+    p <- p + geom_line(size = 1, alpha = 0.75)
+  } else {
+    p <- p + geom_point(size = 3, alpha = 0.50)
   }
-  return(p + geom_point())
+
+  p +
+    scale_colour_brewer(palette = "Set2") +
+    theme_minimal() +
+    labs(x = NULL)
 }
 
-plot.hutton <- function(obs, only_hutton = FALSE) {
 
 #' Plot the Hutton criteria for a selected weather station
+#'
+#' @details A *dark* *square* denotes days where both Hutton Criteria have been
+#'   met.
+plot.hutton <- function(obs, only_hutton = FALSE) {
   ## TODO: Could make the colour schemes the same
   temp_lim <- 30
   hum_lim <- 75
@@ -172,7 +171,7 @@ plot.hutton <- function(obs, only_hutton = FALSE) {
       aes(
         x = day(ob_time),
         y = Site_Name,
-        size = H,
+        size = 2 * H,
         shape = H_shape,
         fill = T
       )
@@ -214,10 +213,17 @@ plot.hutton <- function(obs, only_hutton = FALSE) {
         title = waiver()
       )
     ) +
-    theme(panel.grid = element_blank())
+    theme(panel.grid = element_blank()) +
+    theme_minimal()
 }
 
+#### Create app UI ####
 ui <- fluidPage(
+  titlePanel(
+    h1("Looking for Hutton Criteria in Blighty (2022)", align = "center"),
+    windowTitle = "Hutton Dash"
+  ),
+  hr(),
   sidebarLayout(
     sidebarPanel(
       selectInput(
@@ -232,9 +238,9 @@ ui <- fluidPage(
       selectInput(
         "statistic",
         "Choose summary statistic",
-        choices = c("Minimum" = "min",
+        choices = c("Mean" = "mean",
                     "Maximum" = "max",
-                    "Mean" = "mean"),
+                    "Minimum" = "min"),
         selected = "mean"
       ),
       selectInput(
@@ -258,8 +264,10 @@ ui <- fluidPage(
         ),
         selected = date("2022-11-01")
       ),
+      hr(),
       leafletOutput("map", height = "600px"),
-      h3("Download"),
+      hr(),
+      h4("Download"),
       ## TODO: centre these buttons, and provide whitespace below
       fluidRow(
         downloadButton("download_csv", "Past Week Summary Table [csv]"),
@@ -268,11 +276,11 @@ ui <- fluidPage(
     ),
     mainPanel(
       plotOutput("primary"),
+      hr(),
       plotOutput("hutton"),
-      ## TODO: format figures to lower s.f. in table output
-      ## TODO: remove search from table
-      dataTableOutput("last_week"),
-      ),
+      hr(),
+      dataTableOutput("last_week")
+    ),
     position = "right"
   )
 )
@@ -348,13 +356,28 @@ server <- function(input, output, session) {
       )
   })
 
+  datatable
   output$primary <- renderPlot(primary_plot())
 
   output$hutton <- renderPlot(hutton_plot())
 
   output$map <- renderLeaflet(leaflet_map())
 
-  output$last_week <- DT::renderDataTable(last_week())
+  output$last_week <- DT::renderDataTable({
+    ## TODO: format figures to lower s.f. in table output
+    ## TODO: remove search from table
+    datatable(
+      last_week(),
+      options = list(
+        dom = 'tp',
+        pageLength = 7
+      )
+    ) %>%
+      DT::formatRound(
+        columns = c("wind_speed", "air_temperature", "rltv_hum", "visibility"),
+        digits = 2
+      )
+  })
 
   output$download_csv <- downloadHandler(
     filename = function() paste0("last_week", ".csv"),
@@ -393,15 +416,18 @@ server <- function(input, output, session) {
       } else {
         updateSelectInput(
           inputId = "statistic",
-          choices = c("Minimum" = "min",
+          choices = c("Mean" = "mean",
                       "Maximum" = "max",
-                      "Mean" = "mean")
+                      "Minimum" = "min")
         )
       }
     }
   )
 
   ## Limit choice of Time Aggregation based on Time Representation
+  ## TODO: This can cause some momentary changing of plots, as shiny might be
+  ## making reactive changes one by one. Is there a way to have changes take
+  ## place instantly?
   observeEvent(
     input$t_rep,
     {

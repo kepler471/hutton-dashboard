@@ -251,7 +251,6 @@ plot.hutton <- function(obs, only_hutton = FALSE) {
     )
 }
 
-#### Create app UI ####
 ui <- fluidPage(
   titlePanel(
     h1("Monitoring blight in Blighty", align = "center"),
@@ -321,11 +320,17 @@ ui <- fluidPage(
 
 #' Server
 #'
+#' @details The main objects in the application are the primary plot, the Hutton
+#'   plot, the data table, the map, and the inputs. The main outputs are bound
+#'   to reactives, rather than being defined within `render*` functions, so that
+#'   they can be accessed by the document renderer, and also so that they can be
+#'   bound with `bindCache` to changes to their inputs. This caching is used for
+#'   the plots and the map, where time can be saved if the user requests a
+#'   graphic that has already been displayed.
 #' @param input
 #' @param output
 #' @param session
 #' @return
-#' @author Stelios Georgiou
 server <- function(input, output, session) {
   max_stations <- 5
 
@@ -340,7 +345,8 @@ server <- function(input, output, session) {
     site_data %>%
       semi_join(filtered(), by = c("Site" = "Site_ID")) %>%
       plot.primary(input$variable, get(input$statistic), input$t_agg, input$t_rep)
-  })
+  }) %>%
+    bindCache(input$variable, input$statistic, input$t_agg, input$t_rep, filtered())
 
   ## TODO: add a toggle to show/hide warm & humid variables
   hutton_plot <- reactive({
@@ -355,7 +361,8 @@ server <- function(input, output, session) {
           as.character(format(as.Date(input$month_selector), "%B"))
         )
       )
-  })
+  }) %>%
+    bindCache(input$month_selector, filtered())
 
   leaflet_map <- reactive({
     ## TODO: use Stadia.AlidadeSmooth tileset
@@ -375,7 +382,8 @@ server <- function(input, output, session) {
         layerId = ~Site_ID,
         color = ~colour
       )
-  })
+  }) %>%
+    bindCache(selected())
 
   last_week <- reactive({
     site_data %>%
@@ -394,11 +402,11 @@ server <- function(input, output, session) {
   })
 
   datatable
-  output$primary <- renderPlot(primary_plot())
+  output$primary <- renderPlot(primary_plot()) %>% bindCache(primary_plot())
 
-  output$hutton <- renderPlot(hutton_plot())
+  output$hutton <- renderPlot(hutton_plot()) %>% bindCache(hutton_plot())
 
-  output$map <- renderLeaflet(leaflet_map())
+  output$map <- renderLeaflet(leaflet_map()) %>% bindCache(leaflet_map())
 
   output$last_week <- DT::renderDataTable({
     datatable(
@@ -480,6 +488,7 @@ server <- function(input, output, session) {
     }
   )
 
+  ## Handle map marker clicks
   observeEvent(
     input$map_marker_click,
     {
